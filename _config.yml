@@ -1,0 +1,11 @@
+title: Gue's Blog
+author: Gue Chen
+  name: Gue Chen
+ email: guechen@buaa.edu.cn
+
+description: >
+  Hi Welcome to Gue's Blog, Learning Interesting Graphics Game Technichals Togother!
+
+remote_theme: pages-themes/midnight@v0.2.0
+plugins:
+- jekyll-remote-theme # add this line to the plugins list if you already have one
