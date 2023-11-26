@@ -1,6 +1,6 @@
 ---
 layout: post
-title:  "Welcome to Jekyll!"
+title:  "Welcome to GuE's Blog!"
 date:   2023-11-26 21:48:34 +0800
 categories: jekyll update
 ---
