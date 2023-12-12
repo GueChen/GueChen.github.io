@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<html lang="en">
+    {% include head.html %}
+    <body>
+    <!-- Naviation Bar -->
+    {% include nav.html %}
+
+    {{ content }}
+
+    {% include footer.html %}
+
+     <!-- js -->
+     <script src="https://cdn.jsdelivr.net/npm/jquery@3/dist/jquery.min.js"></script>
+    <!--<script src="https://ajax.aspnetcdn.com/ajax/jquery.ui/1.10.4/jquery-ui.min.js"></script>-->
+    <script src="{{ site.baseurl }}/assets/js/customevents.js"></script> 
+    <script src="{{ site.baseurl }}/assets/js/boot.js"></script>
+    </body>
+</html>
