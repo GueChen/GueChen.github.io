@@ -23,14 +23,20 @@ email: guechen@buaa.edu.cn
 description: >- # this means to ignore newlines until "baseurl:"
   Welcome To GuE's Blog.
 baseurl: "" # the subpath of your site, e.g. /blog
+header-img: assets/img/header-bg.jpg
 url: "" # the base hostname & protocol for your site, e.g. http://example.com
-twitter_username: none
-github_username:  GueChen
-
+zhihu_username: u-r-ague
+github_username: GueChen
+display_header: 
+ - '这使你充满了决心.-♥'
+ - 'you-are-filled-with-determination.-♥'
+author: GueChen
 # Build settings
-theme: minima
+# theme: minima
 plugins:
   - jekyll-feed
+  - jekyll-paginate
+
 
 # Exclude from processing.
 # The following items will not be processed, by default.
