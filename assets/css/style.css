@@ -282,12 +282,38 @@ table td { border: 1px solid #e8e8e8; }
   text-align: left;
 }
 
-.post-contents:after,.post-contents:before, .page-contents{
+.post-contents:after,.post-contents:before, .page-contents, .pageweb-contents{
   display:table;content:" "
 }
 .post-contents::after{
   clear:both
 }
+
+/* page web begin */
+.pageweb-box{
+  margin-left: 20%;
+  margin-right: 20%;
+  display: flex;
+  justify-content: center;
+  position: relative;
+  margin-top: -20px;
+  background-color: white;
+  transition: background-color 0.2s ease-in-out;
+  border-radius: 2rem;
+  z-index: 3;
+  -webkit-box-shadow: 0 12px 15px 0 rgba(0,0,0,0.24), 0 17px 50px 0 rgba(0,0,0,0.19);
+  box-shadow: 0 12px 15px 0 rgba(0,0,0,0.24), 0 17px 50px 0 rgba(0,0,0,0.19);
+}
+
+.pageweb-contents {
+  padding-top: 3rem;
+  text-align: left;
+}
+
+.pageweb-contents::after, .pageweb-box::after{
+  clear:both
+}
+/* page web end */
 
 /** Header Part **/
 @media (min-width: 800px) {

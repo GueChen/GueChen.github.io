@@ -1,0 +1,18 @@
+cvar{
+    background-color: #FFDDDD;    
+    border: 1px solid #EEBBBB;
+    color: #772222;    
+}
+
+cfunc{
+    background-color: #FFFFDD;
+    border: 1px solid #EEEEBB;
+    color: #777733;
+}
+
+cvar, cfunc {
+    border-radius: 3px;    
+    font-size: 0.9em;
+    /* margin: 0px 2px 0px 2px; */
+    padding: 0px 4px 0px 4px;
+}
