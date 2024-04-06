@@ -69,13 +69,13 @@ UNavigationSystemV1::Build()
 
 + 体素化 - `RasterizeTriangles`
 + 体素筛选 - `GenerateRecastFilter`
-+ 构建可行走区域 - `BuildCompactHeightField`
++ 构建可行高度场 - `BuildCompactHeightField`
 + 边缘剔除 - `RecastErodeWalkable`
 + 体素分层 - `RecastBuildLayers`
 
 #### 体素化 - RasterizeTriangles
 
-逻辑上较为直白，遍历存储在「<cvar>RawGeometry</cvar>」上的几何体碰撞数据，进行体素化「<cfunc>RasterizeGeometryRecast</cfunc>」处理。
+该步骤负责将三角面体素化，实现的逻辑上较为直白，遍历存储在「<cvar>RawGeometry</cvar>」上的几何体碰撞数据，进行体素化「<cfunc>RasterizeGeometryRecast</cfunc>」处理。
 在体素化函数内部分为两个阶段：
 
 + 标记可走三角面 - <cfunc>rcMarkwalableTriangles</cfunc>
@@ -107,7 +107,175 @@ UNavigationSystemV1::Build()
   1. 当三角形仅占据一个体素 「span」 时，不用切割，可直接记录其 y 方向上高度，填入高度场；
   2. 当三角形在 y 方向上跨度不超过超参数 `CellHeight` 时，切割时可不用记录 y 轴的值跨度。
 
+#### ~~ApplyVoxelFilter~~
+
+> 待补充，暂时没看，看注释是过滤掉 Tile 外的体素
+
+#### 体素筛选 - GenerateRecastFilter
+
+该步骤对体素化中一些不满足 AI 可走的块进行剔除标记，使用宏 <cmcr>RC_NULL_AREA</cmcr> 进行标记。
+
+需要剔除的体素块一共有两种类型：
+
++ ➕<cfunc>rcFilterLowHangingWalkableObstacles</cfunc> - 增加可行体素
++ ➖<cfunc>rcFilterLedgeSpans</cfunc> - 筛除不可行体素
+
+**rcFilterLowHangingWalkableObstacles**
+
+标记低悬障碍物为可达区域，若一个体素块原先被标记为**不可达**，但其同位置的链表上前一个体素块可达，且前后的高度差低于最大攀爬高度 <cvar>walkableClimb</cvar>，则认为该体素块可通过攀爬到达：
+
+```cpp
+// RecastFilter.cpp
+// void rcFilterLowHangingWalkableObstacles(...)
+Δheight = Abs(curSpan.height - prevSpan.height);
+if(Δheight <= walkableClimb)
+{
+    curSpan.area = 👟;
+}
+```
+
+其示意图如下所示，
+
+【❌缺示意图】
+
+**rcFilterLedgeSpans**
+
+该步骤筛除孤立在空中的 **ledge** 体素，所谓 **ledge** 即一个体素的所有邻居均低于可攀爬高度，那该体素孤立且没有可达的可能性，则理应被剔除。
+
+> **ledge**： ledge is a span with one or more neighbors whose maximum is further away than walkableClimb from the current span's maximum.
+>
+> <div style="text-align:right;font-family:MV Boli;">-RecastFilter.cpp rcFilterLedgeSpans</div>
+
+其代码实现大致如下：
+
+```cpp
+// RecastFilter.cpp
+// void rcFilterLedgeSpans(...)
+ΔneighborHeightMin = Min(neighborSpan.height - curSpan.height);
+if(ΔneighborHeightMin > walkableClimb)
+{
+    curSpan.area = ❌👟;
+}
+```
+
+其示意图如下：
+
+
+
+除此外还有一个可选过滤项 <cvar>filterNeighborSlope</cvar> ，当前邻居块间高度差大于可攀爬高度时，可判断当前体素块是陡崖的一部分，也应当予以排除：
+
+```cpp
+// RecastFilter.cpp
+// void rcFilterLedgeSpans(...)
+neighborHeightMax = Max(neighborSpan.height);
+neighborHeightMin = Min(neighborSpan.height);
+if(neighborHeightMax - neighborHeightMin > walkableClimb)
+{
+    curSpan.area = ❌👟;
+}
+```
+
+其示意图如下：
+
+
+
+其它还有两类可选的过滤函数：
+
++ <cfunc>rcFilterWalkableLowHeightSpans</cfunc>
++ <cfunc>rcFilterWalkableLowHeightSpans</cfunc>
+
+
+- [ ] [👨‍🏭待施工]
+
+至此原始体素的生成与标记完毕。
+
+#### 构建可行高度场 - BuildCompactHeightField
+
+在游戏中，不考虑攀爬与飞行的条件下，一个 NPC 的寻路通常是指在物体 『**上表面**』 移动。
+
+对于一个体素，其实并不关心它中间的部分，而只用关注它的上层的高度与可提供站立的空间。
+
+因此，可以有更为紧凑的体素表述，称为紧凑高度场/可行走高度场。
+
+【❌缺图】
+
+构建的过程十分朴素，把上个体素（Span）中记录的上表面高度填入紧凑体素，并记录该可供站立的空间高度：
+
+```cpp
+// RecastFilter.cpp
+// void rcBuildCompactHeightfield(...)
+chf.span.y = curSpan.smax;                 // 记录站立点的高度
+chf.span.h = nextSpan.smin - curSpan.smax; // 记录站立空间的高度
+```
+
+在该过程中同时会对四方向上的邻居块进行检测，构筑邻居块间的连接关系。两个邻居块具备连接关系的条件有二：
+
++ 高度差在可攀爬高度 <cvar>walkableClimb</cvar> 之内
+
+  ```cpp
+  // RecastFilter.cpp
+  // void rcBuildCompactHeightfield(...)
+  if(Abs(neighbourSpan.y - curSpan.y) <= walkableClimb) ...
+  ```
+
++ 两块间可以容纳一个完整的 「 Agent 」，即顶的下界与底的上界之差大于 <cvar>walkableHeight</cvar> 
+
+  ```cpp
+  // RecastFilter.cpp
+  // void rcBuildCompactHeightfield(...)
+  top = Min(span.y + span.h, neighbourSpan.y + neighbourSpan.h);
+  bot = Max(span.y, neighbourSpan.y);
+  if((top - bot) >= walkableHeight) ...
+  ```
+
+#### 边缘过滤 - RecastErodeWalkable
+
+理想的 「 Agent 」 是一个没有体积只有位置的点，但游戏中的角色必然不理想。考虑到角色的体积与重心，不是所有可行走高度场均能够提供站立的空间，如边缘对于 『**矮胖型**』 绝对不是安全站立点。
+
+所以，需要对获取的可行走区域进行进一步的过滤剔除。
+
+对于「 Agent 」 假设其重心位于中心点，则不超出其半径的边缘区或碰撞区即为安全区，计算安全区可使用距离场，计算距离场可采用两阶段遍历的方法（ 2-Pass Distance Transform ）的方式：
+
++ 首先标记  **『边界』** 的体素，指不可行走或四方邻居存在缺失的块：
+
+  ```cpp
+  // RecastArea.cpp
+  // bool rcErodeWalkableArea(...)
+  if (chf.areas[i] == RC_NULL_AREA) {
+      dist[i] = 0;
+  }
+  else {
+      countNeighbour = 0;
+      ...
+      if(countNeighbour != 4)
+  	    dist[i] = 0;
+  }
+  ```
+
++ 接着通过两次遍历填充生成距离场，填充规则为四方邻居距离加 2，对角邻居距离加 3（$3 \approx 2\sqrt{2}$）
+
+  1. 第一次遍历，对 $9 \times 9$ 的方格内下方与左侧的 4 个邻居块进行填充
   
+  2. 第二次遍历，对 $9 \times 9$ 的方格内上方与右侧的 4 个邻居块进行填充
+  
+     【❌缺图】
+  
+  填充时取填入的最小值
+  
++ 对于距离场值小于 <cvar>walkableRadius</cvar> 的块即判定为不可行区域
+
+  ```cpp
+  // RecastArea.cpp
+  // bool rcErodeWalkableArea(...)
+  if (dist[i] < thr)
+      chf.areas[i] = RC_NULL_AREA;
+  ```
+
+#### 体素分层 - RecastBuildLayers
+
+
+
+
 
 
 ### GenerateNavigationData
@@ -123,3 +291,7 @@ UNavigationSystemV1::Build()
 说起导航，第一反应其实是 SLAM 小车 UAV、无人机、激光雷达巴拉巴拉。要说为啥，因为老本行是机器人那边的，同组的👨👩一提导航就铁定是 SLAM，想起大三被贵州老铁拉着做冯如杯的时光...跑题了。
 
 Anyway，每天健完身下班回来都写点东西，希望劳动节前能更完本篇。
+
+# 参考
+
+[^1]: [Distance Transforms](https://www.cs.auckland.ac.nz/~rklette/Books/MK2004/pdf-LectureNotes/08slides.pdf)
