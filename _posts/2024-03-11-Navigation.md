@@ -13,7 +13,7 @@ categories: jekyll update
 
 观测或控制某种交通工具从一个位置到另一个位置的研究即为 **导航**🛰。就日常而言，人们下意识的感到自己在使用导航，是打开地图前往一个不知道怎么走的目的地时。
 
-这个知道起点与终点，不知道怎么走的问题，在游戏中可以被称为寻路问题（Pathfinding）。例如 RTS 星际争霸中控制枪兵移动到鼠标🖱位置，便是一个典型的寻路问题。在算法中，寻路问题的对应的是经典的图论问题。然而，连续的游戏世界似乎很难与一个抽象离散且有限的图集联系在一起，因此需要一些方法提取出抽象图。
+这个知道起点与终点，不知道怎么走的问题，在游戏中被称为寻路问题（Pathfinding）。例如 RTS 星际争霸中控制枪兵移动到鼠标🖱位置，便是一个典型的寻路问题。在算法中，寻路问题的对应的是经典的图论问题。然而，连续的游戏世界似乎很难与一个抽象离散且有限的图集联系在一起，因此需要一些方法提取出抽象图。
 
 较早的代表方案是栅格地图（Grid Map），把连续的平面离散为一个个网格。该方法对于早期的平面或 2.5D 的游戏是良好的，例如星际争霸中可以看到建造时出现的占据栅格。而对于现代游戏简单的栅格地图遇到了两个难题：其一，是地图越来越大了，高精度的栅格地图开销是巨大的，无论是内存还是寻路；其二，是三维的场景越来越多，简单的栅格没法满足高度重叠的情况。
 
@@ -252,17 +252,17 @@ chf.span.h = nextSpan.smin - curSpan.smax; // 记录站立空间的高度
   }
   ```
 
-+ 接着通过两次遍历填充生成距离场，填充规则为四方邻居距离加 2，对角邻居距离加 3（$3 \approx 2\sqrt{2}$）
++ 接着通过两次遍历填充生成距离场，填充规则为四方邻居距离加 2，对角邻居距离加 3（$3 \approx 2\sqrt{2}$）：
 
-  1. 第一次遍历，对 $9 \times 9$ 的方格内下方与左侧的 4 个邻居块进行填充
+  1. 第一次遍历，对 $9 \times 9$ 的方格内下方与左侧的 4 个邻居块进行填充；
   
-  2. 第二次遍历，对 $9 \times 9$ 的方格内上方与右侧的 4 个邻居块进行填充
+  2. 第二次遍历，对 $9 \times 9$ 的方格内上方与右侧的 4 个邻居块进行填充。
   
      【❌缺图】
   
-  填充时取填入的最小值
+  填充时取填入的最小值。
   
-+ 对于距离场值小于 <cvar>walkableRadius</cvar> 的块即判定为不可行区域
++ 对于距离场值小于 <cvar>walkableRadius</cvar> 的块即判定为不可行区域：
 
   ```cpp
   // RecastArea.cpp
@@ -271,11 +271,124 @@ chf.span.h = nextSpan.smin - curSpan.smax; // 记录站立空间的高度
       chf.areas[i] = RC_NULL_AREA;
   ```
 
+至此，体素生成阶段已完成。
+
 #### 体素分层 - RecastBuildLayers
 
+在拥有了所有可行走体素后，可以开始着手建图。已有的体素结构之间存在连接关系，理论上已是一张可用的图，但问题在于节点太多了。每一个体素块都可以看作是一个图的节点，寻路的复杂度过高，且存储这些节点是较为浪费的。
 
+因此，需要对生成的体素进行集合划分，其中的第一类集合即为 「 **层** 」（**Layers**）。
 
+需注意生成的多边形网格可看作是一个 2.5D 的结构，因此对于在高度上有重叠的块需进行区分，而对于连通的块可进行合并。
 
+划分集合的第一个依据是将邻近的块进行合并，如何判断是否邻近？答案是 「 **距离场** 」。
+
+> 🤔注意上一步的距离场似乎有复用的空间，但 Recast 中的实现是重新再算了一次，应该是考虑到 2-Pass 计算本身并不复杂，且复用的话分区代码就不那么简洁。（个人想法）
+
+**rcBuildDistanceField**
+
+计算距离场调用的是函数 <cfunc>rcBuildDistanceField</cfunc>：
+
+```cpp
+// RecastRegion.cpp
+// bool rcBuildDistanceField(...)
+calculateDistanceField(...);
+
+boxBlur(...);
+```
+
+其中 <cfunc>caculateDistanceField</cfunc> 的计算采用两阶段遍历（ 2-Pass Distance Transform ），具体过程可参考 [边缘过滤](#边缘过滤 - RecastErodeWalkable) ，再此不再赘述；
+
+而 <cfunc>boxBlur</cfunc> 则是对生成的距离场进行平滑处理，使用的是具备连接关系的 9 邻居合求均值的方式：
+
+```cpp
+// RecastRegion.cpp
+// unsigned short* boxBlur(...)
+dst[i] = (sum(neigborsSrc) + 5) / 9;
+```
+
+**rcBuildHeightFieldLayers**
+
+构建分层的方式被称为 「 **分水岭算法** 」（**Watershed Algorithm**），该算法的思路也十分直观：*水从低洼的地方注入，逐渐上涨淹没所有陆地*。
+
+低洼的地方，在本例中即为可站立体素最中心的块；而在距离场的视角，即距离边缘最远的地方。
+
+把每一个新的水坑视作一个新的区域，设置距离阈值，让水坑的水逐步上涨标记周边体素，直到所有体素均被标记完毕。
+
++ PartⅠ - rcGatherRegionsNoFilter
+
+  对体素块进行标记，主要过程发生在 <cfunc>rcGatherRegionsNoFilter</cfunc> 中，具体过程如下：
+
+  首先标记 「 **边界** 」（**Border**） 区：
+
+  ```cpp
+  // RecastRegion.cpp
+  // bool rcGatherRegionNoFilter(...)
+  PaintRectRegion(0, bw, 0, h,...); 
+  PaintRectRegion(w-bw, w, 0, h,,...); 
+  PaintRectRegion(0, w, 0, bh,...); 
+  PaintRectRegion(0, w, h-bh, h,...); 
+  ```
+
+  > 需注意该处的边界指的是整个 Tile 的四周，此处标记是为了后面与其它 Tile 作连接使用
+
+  随后使用 <cfunc>floodRegion</cfunc> 与 <cfunc>expandRegions</cfunc> 两个函数交替填充整个区域：
+
+  ```cpp
+  // RecastRegion.cpp
+  // bool rcGatherRegionNoFilter(...)
+  while(level > 0)
+  {
+      level -= 2;
+      // 扩充当前区域
+      expandRegions(level, ...);
+     	for(auto & span : chf)
+      {
+          // 水没有淹到当前高度
+          if(span.dist < level)         continue;
+          // 区域已标记
+          if(span.region != 0)          continue;
+          // 该体素不可行
+          if(span.area == RC_NULL_AREA) continue;
+          // 注入新的区域标识
+          floodRegion(span, regionId++);
+      }
+  }
+  ```
+
+  具体了解一下两个函数的实现：
+
+  + floodRegion
+
+    找到一个体素块，检查它的八邻居，若存在与其 「 **区块** 」 （area） 一致，但已有集合标记 「 **区域** 」（region） 的连通邻居，则该块的 「 **区域** 」所属应与该邻居保持一致；
+
+    否则，该块应视为一个新的 「 **区域** 」，并将满足距离的非标记连通四邻居标为相同的 「 **区域** 」，构成一个新的体素集合。
+
+    > **区域** 只是对其中集合的一种称呼，没有特别含义，把它看作是集合划分即可
+
+    其示意图如下：
+
+    【👨‍🏭待施工】
+
+  + expandRegions
+
+    对于在距离场中高于输入阈值 <cvar>level</cvar> 但未有归属集合的体素块，检查它的四个连通邻居，若其中存在 「 **区块** 」 （area） 一致，且已有集合标记 「 **区域** 」（region）的，将该体素块归入邻居集合。
+
+    若存在多个可取集合，则取距离场上最近的邻居。
+
+    其示意图如下：
+
+    【👨‍🏭待施工】
+
+  两个过程均使用一个队列完成，思路类似 BFS，完成该阶段后所有的可行走体素块均具有自己的集合 「 **区域** 」（region）标记。
+
++ PartⅡ
+
+  对于已有的 「 **区域** 」若每一个均划分一份集合，则集合的空间不重叠度有些过高，例如两块在高度上没有冲突的集合是可以看作一个 「**层**」（Layer）。因此存在可以合并的 「 **区域** 」邻居需对其进行区分。
+
+  
+
+  
 
 
 ### GenerateNavigationData
