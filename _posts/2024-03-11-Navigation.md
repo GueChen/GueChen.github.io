@@ -384,10 +384,181 @@ dst[i] = (sum(neigborsSrc) + 5) / 9;
 
 + PartⅡ
 
-  对于已有的 「 **区域** 」若每一个均划分一份集合，则集合的空间不重叠度有些过高，例如两块在高度上没有冲突的集合是可以看作一个 「**层**」（Layer）。因此存在可以合并的 「 **区域** 」邻居需对其进行区分。
+  对于已有的 「 **区域** 」若每一个均划分一份集合，则集合的空间不重叠度有些过高，例如两块在高度上没有冲突的 「 **区域** 」以 2.5D 的角度来看，完全可以属于同一个集合，这个新的更大的集合称为 「**层**」（Layer）。因此对可以合并的 「 **区域** 」邻居进行划分。
 
+  该过程实际对已有集合进行了两个标记：
+
+  1. 记录每个 「 **区域** 」 的相邻邻居 「 **区域** 」；
+  2. 标记在高度上存在重叠，无法合并的 「 **区域** 」。
   
+  实际过程中分别对应了 <cfunc>walkContour</cfunc> 与 <cfunc>addUniqueLayerRegion</cfunc> 两个函数，整个过程伪码如下：
+  
+  ```cpp
+  // RecastRegion.cpp
+  // bool rcBuildHeightFieldLayers(...)
+  for(auto & span : chf)
+  {
+      reg = regs[span.index];
+      // 标记高度上重叠的区域，代表两个区域无法合并
+      nspan = nullptr;
+      for(auto overlapSpan : overlapSpans)
+      {
+          overReg = regs[overlapSpan.index;
+          if(overReg != reg)
+          {
+              addUniqueLayerRegion(reg, overReg);
+          }
+      }
+      
+      //... 略过已处理区域
+   	
+      // 该可行走高度块是某区域边缘
+  	// 遍历该区域边缘收集所有可合并邻居区域
+      if(isSolidEdge(span, ...))
+  	{
+          walkContour(span, dir, ...);
+      }                  
+  }
+  ```
+  
+  其中 <cfunc>addUniqueLayerRegion</cfunc> 的实现方式为在 <ctype>rcLayerRegion</ctype> 中维护一个成员数组 <cvar>layers</cvar>，该数组记录了所有重叠 「 **区域** 」。而该函数就负责检测并添加重叠区域的编号至该数组。
+  
+  接下来，对遍历边缘进行详细分析：
+  
+  + IsSolidEdge
+  
+    给定一个体素块和一个探测方向，若该块与探测方向上的邻居块相连，但两者的区域不同，则该块为当前 「 **区域** 」 的边缘；
+  
+    【缺图👨‍🏭】
+  
+  + walkCountour
+  
+    给定一个体素块和一个初始探测方向，沿边缘遍历该「 **区域** 」，并记录所有的相邻「 **区域** 」，该过程遵循如下探索规则：
+    
+    1. 若探测方向上是不同 「 **区域** 」，则保持原地不动，探测方向向顺时针转动；
+    2. 若探测方向上是相同 「 **区域** 」，则向该方向移动，探测方向向逆时针转动。
+    
+    其整个过程示意图如下所示：
+    
+    【缺图👨‍🏭】
+    
+    在遍历边缘过程中，使用一个 <ctype>rcIntArray</ctype> 结果将经过的所有区域收集统计，如此编获取了所有相邻的邻居 「 **区域** 」，整个过程伪码大致如下：
+    
+    ```cpp
+    // RecastRegion.cpp
+    // void walkContour(span, dir, ...)
+    // 记录初始方向和位置
+    startDir  = dir;
+    startSpan = span;
+    iter = 0;
+    
+    while(iter < maxIter)
+    {
+        // 当前方向为不同区域，停留，顺时针转向
+        if(isSolidEdge(curSpan, curDir))
+        {
+            neighborRegion = Region(span, dir);
+            regCollector.push(neighborRegion);
+            curDir = RotateCW(curDir)
+        }
+        else
+        // 当前方向为相同区域，前进，逆时针转向
+        {
+            curSpan = Forward(curSpan, curDir);
+            curDir = RotateCCW(curDir);
+        }
+        
+        // 遍历完毕，退出循环
+        if(curSpan == startSpan && curDir == startDir)
+            break;
+    }
+    ```
+  
++ Part Ⅲ
 
+  对于相邻且满足合并条件的 「 **区域** 」打上 「 **层** 」的标记，「 **层** 」可以看作是一种 2D 的体素集合，邻居 「 **区域** 」可合并为一个 「 **层** 」需满足以下条件：
+
+  + 与当前「 **层** 」没有在垂直方向重叠；
+  + 合并后所有邻居的高度差小于 「 **层** 」 高度差限制（255 个体素高度）；
+
+  标记过程采用类似 BFS 的方案，通过一个 **根区域**  遍历所有 **邻居区域**，其伪码如下：
+
+  ```cpp
+  // RecastRegion.cpp
+  // bool rcBuildHeightFieldLayers(...)
+  unsigned short layerId = 0;
+  for(rcLayerRegion& reg : regions)
+  {
+      // 跳过已访问及空区域
+      if(reg.visted || !reg.hasSpans) continue;
+      reg.layerId = layerId;
+      reg.visited = true;
+      reg.base = true;
+      
+      // BFS 遍历邻居区，标记层号
+      stack.push(reg);
+      while(!stack.IsEmpty())
+      {
+          rcLayerRegion& reg = stack.pop();
+          // 遍历邻居
+          for(rcLayerRegion& neiReg : reg.connections)
+          {
+              // 跳过边缘
+              if(neiReg.reg & RC_BORDER_REG) continue;
+              // 跳过已访问
+              if(neiReg.visited) continue;
+              // 跳过重叠区
+              if(reg.layers.contain(neiReg)) continue;
+              // 跳过高度差超限的情况
+              ymin = rcMin(reg.min, neiReg.min);
+              ymax = rcMax(reg.max, neiReg.max);
+              if((ymax - ymin) >= HeightLimit) continue;
+              
+              stack.push(neiReg);
+              neiReg.visited = true;
+              neiReg.layerId = layerId;
+              
+              // 添加当前区域的重叠区至根区
+              addUniqueLayersRegion(reg, neiReg.layers);
+              reg.min = ymin;
+              reg.max = ymax;            
+          }
+      }
+      // 层号自增
+      ++layerId;
+  }
+  ```
+
++ Part Ⅳ
+
+  对于不相邻，但是高度接近且不存在垂直重叠的「 **层** 」可继续进行合并操作，此时仅需遍历根区域，由于 Part Ⅲ，此时根区域可作为「 **层** 」 的代表，遍历根区域等价于遍历「 **层** 」：
+  
+  ```cpp
+  // RecastRegion.cpp
+  // bool rcBuildHeightFieldLayers(...)
+  for(rcLayerRegion& reg : regions)
+  {
+      // 非根，可跳过
+      if(!reg.base) continue;
+      unsigned short newId = reg.layerId;
+      while(true)
+      {
+          for(rcLayerRegion& otherReg : regions)
+          {
+              // 与上检测根重复
+              if(otherReg == reg) continue;
+              // 非根，可跳过
+              if(!otherReg.base) continue;
+              // 检测该层是否在合并高度范围内
+              if(overlapRange(reg, otherReg, mergeHeight)) continue;
+              
+          }
+      }
+  }
+  ```
+  
+  
+  
   
 
 
@@ -404,6 +575,8 @@ dst[i] = (sum(neigborsSrc) + 5) / 9;
 说起导航，第一反应其实是 SLAM 小车 UAV、无人机、激光雷达巴拉巴拉。要说为啥，因为老本行是机器人那边的，同组的👨👩一提导航就铁定是 SLAM，想起大三被贵州老铁拉着做冯如杯的时光...跑题了。
 
 Anyway，每天健完身下班回来都写点东西，希望劳动节前能更完本篇。
+
+急急急~劳动节前够呛啦~~~
 
 # 参考
 
