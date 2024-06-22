@@ -543,6 +543,7 @@ dst[i] = (sum(neigborsSrc) + 5) / 9;
       unsigned short newId = reg.layerId;
       while(true)
       {
+          unsigned short oldId = 0xffff;
           for(rcLayerRegion& otherReg : regions)
           {
               // 与上检测根重复
@@ -551,15 +552,28 @@ dst[i] = (sum(neigborsSrc) + 5) / 9;
               if(!otherReg.base) continue;
               // 检测该层是否在合并高度范围内
               if(overlapRange(reg, otherReg, mergeHeight)) continue;
+               // 跳过高度差超限的情况
+              ymin = rcMin(reg.min, otherReg.min);
+              ymax = rcMax(reg.max, otherReg.max);
+              if((ymax - ymin) >= HeightLimit) continue;            
+              // 遍历该层中其它区域，若存在重叠区则跳过该层
+              if(OverlapNeighbor(otherReg, Reg)) continue; 
               
+              // 该层可合并，记录跳出循环
+              oldId = otherReg.layerId;
+              break;            
           }
+          
+          // 没有可合并层，跳出循环
+          if(oldId == 0xffff) break;
+          
+          // 合并所有该层的区域
+          MergeOtherRegBelongToLayer(regions, oldId, newId);
       }
   }
   ```
   
-  
-  
-  
+  至此，「 **层** 」的生成已经完成，随后仅需把生成的数据填入 <ctype>rcHeightfieldLayer</ctype> 中。
 
 
 ### GenerateNavigationData
@@ -576,7 +590,9 @@ dst[i] = (sum(neigborsSrc) + 5) / 9;
 
 Anyway，每天健完身下班回来都写点东西，希望劳动节前能更完本篇。
 
-急急急~劳动节前够呛啦~~~
+~~急急急~劳动节前够呛啦~~~~
+
+已经不急了，下个节点 7 月！
 
 # 参考
 
