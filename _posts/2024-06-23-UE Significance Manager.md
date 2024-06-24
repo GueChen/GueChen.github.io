@@ -1,13 +1,13 @@
 ---
 layout: post
 title:  "Significance Manager in UE5"
-date:   2024-06-23 20:20:00 +0800
+date:   2024-06-22 20:20:00 +0800
 categories: jekyll update
 ---
 
 ## 定义
 
-下列定义摘取自官方文档 [Significance Manager in Unreal Engine | Unreal Engine 5.4 Documentation | Epic Developer Community (epicgames.com)](https://dev.epicgames.com/documentation/en-us/unreal-engine/significance-manager-in-unreal-engine?application_version=5.3)
+下列定义摘取自官方文档 [Significance Manager in Unreal Engine ](https://dev.epicgames.com/documentation/en-us/unreal-engine/significance-manager-in-unreal-engine?application_version=5.3)：
 
 > **Significance Manager** 提供了一个支持编写特定于项目的灵活代码的能力的集中框架，这些代码可用于对对象求值并确定它们相对于彼此的优先顺序。通过使用该评估方法，对象可通过关闭 **粒子发射器** 等 **组件** 或以较低的频率运行复杂AI代码的方式修改其行为。
 
