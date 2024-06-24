@@ -1,14 +1,16 @@
 ---
-layout: page
+layout: base
 nav-title: "about"
 title: "About Me"
 permalink: /about/
 ---
-<center>
-<font size=6><b>
+<font size = 6>
+<div style="text-align: center;margin-top: 35px;">
+<b>
     GuE
-</b></font>
-</center>
+</b>
+</div>
+</font>
 
 🏆 A07 地下摸鱼总冠军/刀狗/图形学伪爱好者兼民科/引擎搬砖民工/老登/菜狗一条
 
@@ -18,7 +20,7 @@ permalink: /about/
 
 💤 期待有一天能 **《余生皆假期》**，过自己的 **《华丽人生》**，梦到 **《金色梦乡》**，而不用担心 **《死神的精确度》**
 
-<center><font size=6 ><b>
+<center><font size=5 ><b>
     Education Experience
 </b></font></center>
 
@@ -26,7 +28,7 @@ permalink: /about/
 
 🎓 M.S In Mechanical Engineering, Beihang University (2020~2023)
 
-<center><font size=6 ><b>
+<center><font size=5 ><b>
     Interest
 </b></font></center>
 🎮 必须是游戏吧（除开 FPS，苦手）
@@ -37,7 +39,7 @@ permalink: /about/
 
 🧙 宅住！
 
-<center><font size=6 ><b>
+<center><font size=5 ><b>
     Contact
 </b></font></center>
 

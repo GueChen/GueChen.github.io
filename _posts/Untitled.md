@@ -1,7 +1,7 @@
 ---
 layout: post
-title:  "Significance Manager in UE5"
-date:   2024-06-23 20:20:00 +0800
+title:  "aa Manager in UE5"
+date:   2024-06-20 20:20:00 +0800
 categories: jekyll update
 ---
 
@@ -11,17 +11,15 @@ categories: jekyll update
 
 > **Significance Manager** 提供了一个支持编写特定于项目的灵活代码的能力的集中框架，这些代码可用于对对象求值并确定它们相对于彼此的优先顺序。通过使用该评估方法，对象可通过关闭 **粒子发射器** 等 **组件** 或以较低的频率运行复杂AI代码的方式修改其行为。
 
-重要度系统可根据「重要度」（Significance）指标来**定制化**管理 `UObject` 对象的表现以提升性能。「重要度」是一个根据位置计算的浮点数数据。
+简而言之，该系统可根据名为「重要度」（Significance）的指标来**定制化**管理 `UObject` 对象的表现以提升性能。所谓重要度即一个根据位置计算的浮点数数据。
 
 # 使用
 
 需要开启插件后支持该功能：
 
-<div style="text-align: center;">
-	<img src='{{ site.baseurl }}\assets\img\post\significance_manager\open_plugin.png' width='700' title='open_plugin'>
-</div>
+![]({{ site.baseurl }}\assets\img\post\significance_manager\open_plugin.png)
 
-开启后，可通过 `static USignificanceManager* Get(const UWorld* World)` 接口拿到该系统。需要关注的其它接口有三个：
+开启后，可通过其 `static USignificanceManager* Get(const UWorld* World)` 接口拿到该系统。需要关注的其它接口有三个：
 
 1. 对象注册接口 `RegisterObject`：
 
@@ -70,11 +68,11 @@ categories: jekyll update
    }
    ```
 
-通常可在一个对象的初始化 `BeginPlay` 时，将对象添加进重要度系统，而在对象销毁 `EndPlay` 时，把对象从重要度系统中移除。
+通常可在一个对象的初始化如 `BeginPlay` 等调用注册进重要度系统，在对象销毁如 `EndPlay` 等位置注销。
 
 # 实现细节
 
-文件路径如下:
+文件路径十分简洁:
 
 >SignificanceManager:.
 >
@@ -90,20 +88,20 @@ categories: jekyll update
 >
 >└─Public
 >
->​        OrderedBudget.h
+>   OrderedBudget.h
 >
 >
 >
->​        SignificanceManager.h
+>   SignificanceManager.h
 
-该目录下核心类为 `USignificanceManager` ，其数据成员如下：
+该目录下比较重要的类为 `USignificanceManager` ，其重要的数据成员比较容易看到：
 
 ```cpp
 class SIGNIFICANCEMANAGER_API USignificanceManager : public UObject
 {
     //...
     
-	// All objects being managed organized by Tag
+    // All objects being managed organized by Tag
 	TMap<FName, TArray<FManagedObjectInfo*>> ManagedObjectsByTag;
 
 	// Reverse lookup map to find the tag for a given object
@@ -117,8 +115,7 @@ class SIGNIFICANCEMANAGER_API USignificanceManager : public UObject
 }
 ```
 
-这些成员变量是用于管理 `UObject` 的数据结构，在更新时进行重要度的计算并以此为依据定制更新注册对象的其行为。
-现对其中部分函数的实现进行简要阐述：
+这些成员变量是注册的用于管理 `UObject` 的数据结构，注册的成员参与计算重要度并以重要度为依据定制其行为。现对其中重要函数的实现进行阐述如下：
 
 # 对象注册
 
@@ -167,11 +164,13 @@ TArray<FManagedObjectInfo*>& ManagedObjectInfos = ManagedObjectsByTag.FindOrAdd(
 BinarySerachInsert(ObjectInfo, ManagedObjectInfos); // 没有该函数为方便阅读简略省去过程
 ```
 
-上述过程中 `BinarySerachInsert` 是使用二分搜索进行插入，将注册的对象放到对应 **Tag** 分组下的合适位置上。
+上述过程中 `BinarySerachInsert` 是对较长但原理上较简单的二分搜索的省略，可视作该对象第一次插入时即经过一次排序，处于对应 **Tag** 中合适的位置。
 
 # 对象注销
 
-对象注销的主要目的是移除 `UObject` 对象对应的管理数据结构 `ManagedObjects`、`ObjWithSequentialPostWork`、`ObjArray`、`ManagedObjectsByTag` ，同时销毁前调用一次对象绑定的 `PostSignificanceFunction` 函数以更新对象状态。
+对象注销的过程没什么特别的在此不详细概述，大概只需了解其主要目的。
+
+即移除 `UObject` 对象对应的管理数据结构 `ManagedObjects`、`ObjWithSequentialPostWork`、`ObjArray`、`ManagedObjectsByTag` 上的信息，同时销毁前主动调用一次对象绑定的 `PostSignificanceFunction` 函数以更新对象状态。
 
 # 对象更新
 
@@ -201,7 +200,7 @@ for [Tag, ObjInfoArray] in ManagedObjectsByTag:
 	ObjInfoArray.StableSort(PickCompareBySignificance(bSortSignificanceAscending));
 ```
 
-实现上需要注意的是 `UpdateSignificance` 函数并非直接调用传入的重要度更新函数，外面包裹了一层 `Wrapper` ，是一种简单的模板模式，它的实现细节伪码如下：
+实现上比较直观的，其中需要注意的是 `UpdateSignificance` 函数并非直接调用传入的重要度更新函数，外面包裹了一层 `Wrapper` ，是一种简单的模板模式，它的实现细节伪码如下：
 
 ```cpp
 // SignificanceManager.cpp
@@ -319,4 +318,3 @@ void AMyCustomActor::PostSignificance(float OldSignificance, float NewSignifican
 }
 
 ```
-
