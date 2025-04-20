@@ -93,13 +93,48 @@ UNavigationSystemV1::Build()
   
   该步骤中将使用三角面生成以高度场表示的占据体素，示意图如下所示:
   <div style="text-align:center;"><img src='{{ site.baseurl }}\assets\img\post\navigation\voxel_heightfield.png' width=500></div>
+
+  一个三角面体素化的示意如下所示：
+  <!-- 3d 演示部分 -->
   
+  <link rel="stylesheet" href="{{site.baseurl}}/assets/css/3d/3dcontainer.css">
+  <script type="importmap">
+        {
+          "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js"
+          }
+        }
+  </script>
+  <div class="three-container-box">
+  <div class="three-container" id="threeBox"></div>
+  <div class="three-container" id="rasterize_voxel"></div>  
+  <div id="controls" style="text-align: center; margin-top: 20px;">
+  </div>
+  <label>
+    Tile Size:
+    <input class="slider" id="tileSizeSlider" type="range" min="4" max="10" step="1" value="4">
+    <span class="slider-value" id="tileSizeValue">4</span>
+  </label>
+  <label>
+    Cell Size:
+    <input class="slider" id="cellSizeSlider" type="range" min="0.1" max="1" step="0.1" value="0.1">
+    <span class="slider-value" id="cellSizeValue">0.1</span>
+  </label>
+  <label>
+    Cell Height:
+    <input class="slider" id="cellHeightSlider" type="range" min="0.05" max="1" step="0.05" value="0.05">
+    <span class="slider-value" id="cellHeightValue">0.05</span>
+  </label>
+  </div>
+  <script type="module" src="{{ site.baseurl }}/assets/js/3d/rasterization.js"></script>
+  <script type="module" src="{{ site.baseurl }}/assets/js/navigation/rasterization_voxel.js"></script>
+
   三角形体素化思路为先沿单一方向对三角形面进行切割形成长条，后再对切割出的长条进行细分，形成体素。
 
   实现上，分为以下步骤：
   1. 首先沿边遍历，对 z 方向进行切割，记录每个 z 条上的 x 最值点，获取 x 方向长条；
   2. 接着对 x 方向进行切割，保证每一个切割块均在超参数 `CellSize` 内。
-  
+
   体素化与光栅化的扫描线方案存在相似性，其平面示意如下图所示：
   <div style="text-align:center;"><img src='{{ site.baseurl }}\assets\img\post\navigation\voxel_tri_process.png' width=800></div>
 
@@ -259,6 +294,11 @@ chf.span.h = nextSpan.smin - curSpan.smax; // 记录站立空间的高度
   2. 第二次遍历，对 $9 \times 9$ 的方格内上方与右侧的 4 个邻居块进行填充。
   
      【❌缺图】
+    <link rel="stylesheet" href="{{site.baseurl}}/assets/css/grid.css">
+    <p>
+      <div class="inline-grid" data-size="10"></div>
+    </p>
+    <script src="{{ site.baseurl }}/assets/js/grid.js"></script>
   
   填充时取填入的最小值。
   
@@ -531,7 +571,7 @@ dst[i] = (sum(neigborsSrc) + 5) / 9;
 
 + Part Ⅳ
 
-  对于不相邻，但是高度接近且不存在垂直重叠的「 **层** 」可继续进行合并操作，此时仅需遍历根区域，由于 Part Ⅲ，此时根区域可作为「 **层** 」 的代表，遍历根区域等价于遍历「 **层** 」：
+  对于不相邻，但是高度接近且不存在垂直重叠的「 **层** 」可继续进行合并操作。由于 Part Ⅲ 已标记过根区域，而从一个根区域出发，可遍历一个 「 **层** 」内的所有区域。因此，此时根区域可作为「 **层** 」 的代表，仅需遍历所有根区域进行对比，即等价于遍历遍历「 **层** 」对比合并高度：
   
   ```cpp
   // RecastRegion.cpp
@@ -573,12 +613,80 @@ dst[i] = (sum(neigborsSrc) + 5) / 9;
   }
   ```
   
-  至此，「 **层** 」的生成已经完成，随后仅需把生成的数据填入 <ctype>rcHeightfieldLayer</ctype> 中。
+  合并后，「 **层** 」的生成已经完成，随后仅需把生成的数据填入 <ctype>rcHeightfieldLayer</ctype> 中。
 
+#### RecastBuildTileCache
+
+把构建的层数据压缩并存储到压缩信息中，这里的操作只有构建 <ctype>dtTileCacheLayerHeader</ctype> 结构体头来记录下基本信息，以及使用 <cfunc>dtBuildTileCacheLayer</cfunc> 将上一步构建好的层数据压缩到 <cvar>FTileRasterizationContext::Layers</cvar> 中去。
+
+```cpp
+// RecastNavMeshGenerator.cpp
+// bool FRecastTileGenerator::RecastBuildTileCache(...)
+for(const rcHeightFieldLayer& layer : RecastContext.LayerSet->layers)
+// 遍历建立的 『层』 结构，构造 TileCache
+{
+  dtTileCacheLayerHeader header = ...; // 头赋值，位置，大小，包围盒范围等
+  
+  // 压缩数据构造 TileCache
+  status = dtBuildTileCacheLayer(...); 
+  if(Failed(statis)) return false;
+
+  // 把压缩数据放入 Layers 中
+  RasterContext.Layers.Add(FNavMeshTileData(CompressedData, ...)); 
+}
+CompressedLayers = MoveTemp(RasterContext.Layers);
+```
+
+使用的压缩方式取决于执行 <cfunc>dtBuildTileCacheLayer</cfunc> 时传入的 Compressor 类型。在 <cfunc>FTileCacheCompressor::compress</cfunc> 中可以看到，默认是使用 **Oodle** 作为压缩方式，当有修改时会使用 **ZLib**。
+```cpp
+// RecastNavMeshGenerator.cpp
+// dtStatus FTileCacheCompressor::compress(...)
+FCompressedCachedHeader DataHeader = ...;
+
+if(GNavMeshUseOodleCompression)
+{
+  CompressedSize = FOodleDataCompression::CompressParallel(...);
+  
+  // 返回值处理判断成功与否
+  ...
+}
+else
+{
+  if(FCompression::CompressMemory(NAME_Zlib, ...))
+  // 返回值处理判断成功与否
+  ...
+}
+```
+由于本次介绍内容主要聚焦在 NavMesh，且限于本人水平未学习过相关算法，压缩算法不在本次介绍内容内。
+
+经过压缩后，「 **层** 」的处理至此已全部结束。可能会比较疑惑，为什么这里几乎没有几何的图信息，还是要存一个 <cvar>CompressedLayer</cvar> 作为中间结构。从组织上看，中间结构是为了区分几何信息改变外的操作，以解耦计算。通过缓存中间结构，当不存在引发体素改变的情况时，无需重复进行耗时的体素化高度场操作，可直接对 「层」 结构进行处理。
 
 ### GenerateNavigationData
+对已经生成的 「层」 结构进行处理:
+```cpp
+// RecastNavMeshGenerator.cpp
+// bool FRecastTileGenerator::GenerateNavigationData(...)
+for (auto & layer : CompressedLayers)
+{
+  // 合法性检查
+  ...
 
+  // 处理压缩 「层」 数据
+  bGenDataLayer = GenerateNavigationDataLayer(.../*layer*/); 
 
+  if(!bGenDataLayer) break;
+}
+
+if(bGenDataLayer) NavigationData = MoveTemp(GenerationContext.NavigationData);
+```
+这里对 <cfunc>FRecastTileGenerator::GenerateNavigationDataLayer</cfunc> 中步骤分为以下几步：
++ MarkDynamicAreas - 标记 Modifier 带来的区域类型
++ dtBuildTileCacheRegion - xxx
++ dtBuildTileCacheContours - xxx
++ dtBuildTileCachePolyMesh - xxx
++ dtBuildTileCachePolyMeshDetail - xxx
++ GatherOffMeshLinkData - xxx
++ dtCreateNavMeshData - xxx
 
 生成 Tile，待施工👨‍🏭
 

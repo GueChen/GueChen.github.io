@@ -1,0 +1,46 @@
+.inline-grid {
+    display: inline-grid;
+    gap: 2px;
+    vertical-align: middle;
+    margin: 0 8px;
+    --cell-size: 2em; /* set your desired cell size */
+    grid-template-columns: repeat(auto-fill, var(--cell-size));
+    grid-auto-rows: var(--cell-size);
+}
+  
+.inline-grid .cell {
+    width: var(--cell-size);
+    height: var(--cell-size);
+    line-height: var(--cell-size);
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    font-size: 1em;
+    border-radius: 15%;
+    font-family: monospace;
+    background-color: rgba(100, 100, 100, 1.0);
+    color: #eeeeee;
+    cursor: grab;
+    user-select: none;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    box-sizing: border-box;
+    text-align: center;
+}
+  
+/* Hover and drag */
+.inline-grid .cell:hover {
+    box-shadow: 0 0 5px #0f0;
+    transform: scale(1.05);
+}
+  
+.inline-grid .cell.frozen {
+    /* background-color: #002; */
+    color: #0ff;
+    box-shadow: inset 0 0 4px #0ff;
+}
+  
+.inline-grid .cell.dragging {
+    opacity: 0.5;
+    border: 1px dashed #0f0;
+}
+  
