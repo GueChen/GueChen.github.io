@@ -1,46 +1,144 @@
 .inline-grid {
-    display: inline-grid;
-    gap: 2px;
-    vertical-align: middle;
-    margin: 0 8px;
-    --cell-size: 2em; /* set your desired cell size */
-    grid-template-columns: repeat(auto-fill, var(--cell-size));
-    grid-auto-rows: var(--cell-size);
+    margin: 16px auto;
+    max-width: max-content;
+    --cell-size: 2.6em;
 }
-  
-.inline-grid .cell {
-    width: var(--cell-size);
-    height: var(--cell-size);
-    line-height: var(--cell-size);
-    display: flex;
-    justify-content: center;
+
+.inline-grid-widget {
+    display: inline-flex;
+    flex-direction: column;
     align-items: center;
-    font-size: 1em;
-    border-radius: 15%;
+    gap: 12px;
+    padding: 14px;
+    border-radius: 14px;
+    background: rgba(20, 24, 30, 0.78);
+    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.25);
+}
+
+.inline-grid-toolbar,
+.inline-grid-phases,
+.inline-grid-legend {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+}
+
+.inline-grid-button,
+.inline-grid-phase {
+    padding: 6px 10px;
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.06);
+    color: #f3f6fb;
+    cursor: pointer;
+    transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.inline-grid-button:hover,
+.inline-grid-phase:hover,
+.inline-grid-phase.is-active {
+    background: rgba(87, 181, 231, 0.22);
+    border-color: rgba(87, 181, 231, 0.55);
+    transform: translateY(-1px);
+}
+
+.inline-grid-radius {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    color: #f3f6fb;
     font-family: monospace;
-    background-color: rgba(100, 100, 100, 1.0);
-    color: #eeeeee;
-    cursor: grab;
-    user-select: none;
-    transition: transform 0.2s ease, box-shadow 0.2s ease;
-    box-sizing: border-box;
+}
+
+.inline-grid-status {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-width: 36rem;
+    color: #f3f6fb;
     text-align: center;
 }
-  
-/* Hover and drag */
-.inline-grid .cell:hover {
-    box-shadow: 0 0 5px #0f0;
+
+.inline-grid-status strong {
+    font-size: 1rem;
+}
+
+.distance-grid {
+    display: grid;
+    gap: 4px;
+}
+
+.distance-grid .cell {
+    width: var(--cell-size);
+    height: var(--cell-size);
+    padding: 0;
+    border: 0;
+    border-radius: 10px;
+    background: #1d4f91;
+    color: #f3f6fb;
+    font-family: monospace;
+    font-size: 0.92rem;
+    cursor: pointer;
+    user-select: none;
+    transition: transform 0.12s ease, box-shadow 0.12s ease, background-color 0.12s ease, opacity 0.12s ease;
+}
+
+.distance-grid .cell:hover {
     transform: scale(1.05);
+    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.12);
 }
-  
-.inline-grid .cell.frozen {
-    /* background-color: #002; */
-    color: #0ff;
-    box-shadow: inset 0 0 4px #0ff;
+
+.distance-grid .cell.is-blocked {
+    background: #4b5563;
+    color: #d1d5db;
 }
-  
-.inline-grid .cell.dragging {
-    opacity: 0.5;
-    border: 1px dashed #0f0;
+
+.distance-grid .cell.is-boundary {
+    background: #c97a13;
+    color: #fff7ed;
 }
-  
+
+.distance-grid .cell.is-safe {
+    background: #1f7a8c;
+}
+
+.distance-grid .cell.is-safe.is-deep {
+    background: #198754;
+}
+
+.distance-grid .cell.is-eroded {
+    background: #9b2c2c;
+    color: #fee2e2;
+}
+
+.inline-grid-legend {
+    color: #f3f6fb;
+    font-size: 0.92rem;
+}
+
+.legend-chip {
+    display: inline-block;
+    width: 0.95em;
+    height: 0.95em;
+    margin-right: 0.35em;
+    border-radius: 0.25em;
+    vertical-align: -0.08em;
+}
+
+.legend-chip.is-blocked {
+    background: #4b5563;
+}
+
+.legend-chip.is-boundary {
+    background: #c97a13;
+}
+
+.legend-chip.is-safe {
+    background: #1f7a8c;
+}
+
+.legend-chip.is-eroded {
+    background: #9b2c2c;
+}

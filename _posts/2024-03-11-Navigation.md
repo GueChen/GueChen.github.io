@@ -107,7 +107,8 @@ UNavigationSystemV1::Build()
   </script>
   <div class="three-container-box">
   <div class="three-container" id="threeBox"></div>
-  <div class="three-container" id="rasterize_voxel"></div>  
+  <div class="three-container" id="rasterize_voxel"></div>
+  <!-- <button id="myButton" style="top: 50px; left: 20px; z-index: 10;">Click me</button>   -->
   <div id="controls" style="text-align: center; margin-top: 20px;">
   </div>
   <label>
@@ -295,9 +296,8 @@ chf.span.h = nextSpan.smin - curSpan.smax; // 记录站立空间的高度
   
      【❌缺图】
     <link rel="stylesheet" href="{{site.baseurl}}/assets/css/grid.css">
-    <p>
-      <div class="inline-grid" data-size="10"></div>
-    </p>
+    <div class="inline-grid" data-size="10"></div>
+    <p style="text-align:center;">点击格子可切换障碍，拖拽可连续涂抹；下方控件可分步查看 Boundary / Pass 1 / Pass 2 / Erode 的结果。</p>
     <script src="{{ site.baseurl }}/assets/js/grid.js"></script>
   
   填充时取填入的最小值。
@@ -657,7 +657,7 @@ else
   ...
 }
 ```
-由于本次介绍内容主要聚焦在 NavMesh，且限于本人水平未学习过相关算法，压缩算法不在本次介绍内容内。
+由于本次介绍内容主要聚焦在 NavMesh，且限于本人水平有限，压缩算法不在本次介绍内容内。
 
 经过压缩后，「 **层** 」的处理至此已全部结束。可能会比较疑惑，为什么这里几乎没有几何的图信息，还是要存一个 <cvar>CompressedLayer</cvar> 作为中间结构。从组织上看，中间结构是为了区分几何信息改变外的操作，以解耦计算。通过缓存中间结构，当不存在引发体素改变的情况时，无需重复进行耗时的体素化高度场操作，可直接对 「层」 结构进行处理。
 
@@ -681,26 +681,870 @@ if(bGenDataLayer) NavigationData = MoveTemp(GenerationContext.NavigationData);
 ```
 这里对 <cfunc>FRecastTileGenerator::GenerateNavigationDataLayer</cfunc> 中步骤分为以下几步：
 + MarkDynamicAreas - 标记 Modifier 带来的区域类型
-+ dtBuildTileCacheRegion - xxx
++ dtBuildTileCachePartition - 对 「层」 的数据进一步划分为 「区」块
 + dtBuildTileCacheContours - xxx
 + dtBuildTileCachePolyMesh - xxx
 + dtBuildTileCachePolyMeshDetail - xxx
 + GatherOffMeshLinkData - xxx
 + dtCreateNavMeshData - xxx
 
-生成 Tile，待施工👨‍🏭
+#### MarkDynamicAreas
 
-# 一些写完后可能会删去的碎碎念
+该步骤用于标记导航修改器（Modifier）相关的体素区域，用于区分出不同寻路消耗（Cost）的地块。
+```cpp
+// RecastNavMeshGenerator.cpp
+// FRecastTileGenerator::MarkDynamicAreas(...)
+// 存在 Modifier 时该函数才生效，标记不同地块
+if(Modifiers.Num())
+{
+  if(xxx.bUseSortFunction && Modifiers.Num() > 1)
+  {
+    FGCScopeGuard GCScopeGuard;
+    // 按 cost 和 fixedCost 对 modifiers 排一个升序
+    ...->SortAreasForGenerator(Modifiers);  
+  }
+  // 标记过低高度区域，一般用不到
+  if(TileConfig.bMarkLowHeightArea)
+  {
+    // 该函数不存在，仅方便阅读流程
+    MarkDynamicAreaUseModifiers() // AreaMod == xxxInLowPass
+    // 剩余未处理 LowHeight 区域均视作不可行走
+    dtReplaceArea(Layer, RECAST_NULL_AREA, RECAST_LOW_AREA);
+  }
+  // 正常 Modifier 的处理流程
+  // 该函数不存在，仅方便阅读流程
+  MarkDynamicAreaUseModifiers() // AreaMod != xxxInLowPass
+}
+```
 
-第一个内容果然还是导航吧。
+注意 <cfunc>MarkDynamicAreaUseModifiers</cfunc> 并不存在，仅用于表述函数流程做简述：
 
-说起导航，第一反应其实是 SLAM 小车 UAV、无人机、激光雷达巴拉巴拉。要说为啥，因为老本行是机器人那边的，同组的👨👩一提导航就铁定是 SLAM，想起大三被贵州老铁拉着做冯如杯的时光...跑题了。
+```cpp
+// 伪码函数 MarkDynamicAreaUseModifiers
+// 遍历所有 Modifiers 中的 Areas 进行标记
+for(FRecasAreaNavModifierElement& Element : Modifiers)
+    for(const FAreaNavModifier& AreaMod : Element.Areas)
+    {
+      // 仅处理涉及 LowPass 情况
+      if(AreaMod.GetApplyMode() == ENavigationAreaMode::xxx) // LowPass / not
+      {
+        const int32* AreaIdPtr = ...; // 标记的地块区域，如水、障碍、路等
+        const int32* ReplaceAreaIDPtr = ...; // 替换的过滤区域，这里仅指 LowHeightArea
+        if(AreaIdPtr != nullptr)
+        {
+          // 实际还对实例化组件和非实例化组件进行了区分，
+          // Replace 的情况则是对 ReplaceAreaIdPtr 区域进行处理
+          MarkDynamicArea(AreaMod, ..., *AreaIdPtr, ReplaceAreaIdPtr);
+        }
+      }
+    }
+```
 
-Anyway，每天健完身下班回来都写点东西，希望劳动节前能更完本篇。
+在 <cfunc>MarkDynamicArea</cfunc> 中，首先根据 『Modifier』 的包围盒 『Bounds』 来判断当前 「层」是否包含 『Modifier』：
 
-~~急急急~劳动节前够呛啦~~~~
+```cpp
+// RrecastNavMeshGenerator.cpp
+// FRecastTileGenerator::MarkDynamicArea(...)
+// 上一步分 「层」 时已经算好的包围盒
+FBox LayerUnrealBounds = Recast2UnrealBox(Layer.header->bmin, Layer.header->bmax);
+FBox ModifierBounds = Modifier.GetBounds().TransformBy(LocalToWorld);
+// 不相交则不必处理该 Modifier，对该 「层」 数据无影响
+if(!LayerUnrealBounds.Intersect(ModifierBounds)) return;
 
-已经不急了，下个节点 7 月！
+switch(Modifier.GetShapeType())
+{
+  case Cylinder:
+    ProcessCylinderModifier(); // 伪码函数不存在
+    break;
+  case Box:
+    ProcessBoxModifier(); // 同上
+    break;
+  case Convex:
+  case InstancedConvex:
+    ProcessConvexModifier(); // 同上
+    break;
+}
+```
+随后根据 『Modifier』 的几何形状做分别做处理。由于这里是流程上的综述，不详细描写不同形状的 『Modifier』 如何计算各自占据的几何区域。感兴趣可跳转至【❌补链接】
+
+该步骤补充了 <cvar>layer</cvar> 中的 <cvar>areas</cvar> 数组，等于每一个体素的寻路耗费被重新标记了一次。
+
+#### dtBuildTileCachePartition
+对 「层」 的体素数据进行进一步划分，这里划分的 「区」 要区别于 Recast 中划分的 「区域」。这里的 「区」 是指相对于 「层」 更小的一个体素集合划分。
+
+UE 中提供了 MONOTONE，WATERSHED 和 CHUNKY 三种划分方案，这里同上仅介绍笔者熟悉的 WATERSHED 抛砖引玉：
+
++ **WATERSHED 分水岭算法**
+  
+  分水岭算法构建 「层」 数据的过程中已经使用过一次，其原理即从低洼的块逐渐使用 BFS 的方法填充，直至覆盖标记所有计算块。
+
+  + dtBuildTileCacheDistanceField 构筑距离场
+  
+  使用两阶段遍历（2-Pass Distance Transform）流程可参考[边缘过滤](#边缘过滤 - RecastErodeWalkable)
+  ```cpp
+  // DetourTileCacheRegion.cpp
+  // static void caculateDistanceField(...)
+  // 遍历标记边缘
+  // area 是地块类型，由上一步 MarkDynamicAreas 标记
+  // src  是距离场值，在该函数中计算获取
+  for(auto& [area, src] : layer)
+  {
+    // 遍历 4 邻居：+ 邻居，o 当前点
+    //     +
+    //  +  o  +
+    //     +
+    for(auto& [nei_area, nei_src] : getNeightbors(cur))
+      if(nei_area != area)
+      {
+        src = 0;  // 地块类型不一致，该块为边缘
+      }
+  }
+
+  // Pass1：自上向下，自左向右
+  //         → +2
+  //  ↙  ↓  ↘
+  //+3   +2   +3
+  for(auto& cur : layer)
+  {
+      for(auto& neighbor : getULNeightbour(cur))
+      {
+        // 如是 4 邻居之一距离为 2，否则为 3
+        float dist = straghtDir(cur, neighbor) ? 2 : 3;
+        cur.src = max(cur.src, neighbor.src + dist);
+      }
+  }
+
+  // Pass2：自下向上，自右向左
+  //  +3  +2  +3
+  //    ↖ ↑ ↗
+  // +2 ←
+  for(auto& cur : layer)
+  {
+      for(auto& neighbor : getDRNeightbour(cur))
+      {
+        // 如是 4 邻居之一距离为 2，否则为 3
+        float dist = straghtDir(cur, neighbor) ? 2 : 3;
+        cur.src = max(cur.src, neighbor.src + dist);
+      }
+  }
+  ```
+  生成 「层」 的距离场后，再通过一个 <cfunc>boxBlur</cfunc> 使距离场的过度更为平滑：
+  ```cpp
+  // DetourTileCacheRegion.cpp
+  // void BoxBlur(...)
+  // 8 邻居求平均
+  for(auto& src : layer.src)
+  {
+    src = (sum(neighbor.src) + 5) / 9
+  }
+  ```
+  距离场可作为辅助数据划分 「区」。
+  + dtBuildTileCacheRegions 集合「区」划分
+  
+  这里划分的集合 「区」 是为了分出初始的多边形块，通过多边形块提取顶点信息，构成图结构中的组成点。
+  值得一提的是，虽然分水岭的思路是由低向高填充，但本次操作中，高距离场值反而代表了低洼区域：
+  ```cpp
+  // DetourTileCacheRegion.cpp
+  // dtStatus dtBuildTileCacheRegions(...)
+  unsigned short regionId = 1;  // 实际是计数与区域区分的标志
+  unsigned short level = (layer.distField.maxDist + 1) & ~1;
+  while(level > 0)
+  {
+    // 每次迭代距离自减 2，因为上一步距离场扩散的最小单位是 2
+    level = level >= 2? level - 2: 0;
+    // 以 level 为最小值扩充一次边界
+    if(expandRegions(..., level, ...))
+    {
+      ... // 记录数据保存
+    }
+
+    // 填充区域
+    for(auto& reg : Regions)
+      if(floodRegion(..., level, regionId, ...))
+        regionId++; // 标记扩散完毕，Id 自增标记下一类区域
+  }
+
+  if(expandRegions(..., 0/*level*/, ...)) // 最后扩充一次，补齐边界条件
+  {
+    ... // 记录数据保存
+  }
+
+  filterSmallRegions(...);
+  ```
+  现对操作细节进行补充介绍：
+    + expandRegions 扩充 「区」 的范围
+  
+    找出当前被淹没（dist >= level）且未被标记（cur_region == 0）的块，根据最近已标记邻居进行标记:
+    ```cpp
+    // detourTileCacheRegion.cpp
+    // unsinged short* expandRegions(..., level, ...)
+    dtIntArray stack;
+    // 遍历距离场和区域信息，找到当前未区分且距离场值大于 level 的块入栈
+    for(auto& [x, y] : layer)
+    {
+      if(dtFiled.data[x, y] >= level && regions[x, y] == 0)
+      {
+        stack.push({x, y});
+      }
+    }
+
+    // 遍历栈中元素
+    while(stack.size() > 0)
+    {
+      auto&& [x, y] = stack.pop();
+
+      unsigned short minDist = 0xffff;
+      unsigned short reg = regions[x, y];
+      // 遍历 [x,y] 的四邻居
+      for(auto& [nx, ny] : getNeighbor(x, y))
+      {
+        curDist = dtField.data[nx, ny] + 2;
+        // 找到最近的已被标记的邻居，则当前块的区域和最近邻居一致
+        if(regions[nx, ny] != 0 &&  curDist < minDist)
+        {
+          reg = regions[nx, ny];
+          minDist = curDist;
+        }
+      }
+      // 更新区域标记和距离场值
+      regions[x, y] = reg;
+      dtFiled[x, y] = curDist;
+    }
+    ```
+
+    这个步骤实际向外扩大了一圈已存 「区」 的范围。
+    + floodRegion 添加新 「区」
+  
+    标记当前 {x, y} 的块为 「区」 regionId，并向距离场值大于当前 level 的 4 邻居扩散一次 「区」 标记：
+    ```cpp
+    // DetourTileCacheRegion.cpp
+    // bool floodRegion(x, y, ..., level, reg, ...)
+    dtIntArray stack;
+    // 当前 {x,y} 元素先标记为 reg 「区」 并入栈
+    stack.push({x, y});
+    region[x, y] = reg;
+    dist[x, y] = 0; // 距离场值归 0 后续不会纳入分水岭更新的范围
+
+    unsigned short lev = level >= 2 ? level - 2 : 0;
+    // bfs
+    while(stack.size() > 0)
+    {
+      auto&& [x, y] = stack.pop();
+      unsigned short nreg = 0;
+      // 遍历 8 邻居，若存在邻居已有 「区」 标记则跳过此次标记
+      for(auto [nx, ny] : get8Neighbors(x, y))
+      {
+        // 略过地块类型不一致
+        if(areas[nx, ny] != areas[x, y]) continue;
+        // 略过未标记邻居
+        if(regions[nx, ny] == 0) continue;
+        
+        nreg = regions[nx, ny];
+      }
+      // 邻居有 「区」，则修改当前 「区」 与邻居一致
+      if(nreg != 0)
+      {
+        regions[x, y] = nreg;
+        continue;
+      }
+
+      // 遍历 4 邻居，将距离场值大于 lev 且未标记的 「区」 打上 「区」 标识
+      // 等于一次 4 邻居扩散
+      for(auto [nx, ny] : getNieghbors(x, y))
+      {
+        if(areas[nx, ny] != areas[x, y]) continue;
+        if(dtField.data[nx, ny] >= lev && regions[nx, ny] == 0)
+        {
+          regions[nx, ny] = reg;
+          dist[nx, ny] = 0;
+          stack.push({nx, ny});
+        }
+      }
+    }
+    ```
+    重复上述两个步骤直至所有块均分好块为止。
+
+  + filterSmallRegions 过滤小 「区」，并合并高度差不大的 「区」
+  
+    经过上面两个步骤的处理，所有的高度场块均被打上了 「区」 的标记，现在已经可以使用这里的 「区」 标记划分多边形集合。但是上述的过程生成的集合 「区」 仍存在几个问题：
+    + 部分 「区」 过小；
+    + 存在重叠可合并的 「区」；
+
+    因此对这两种可以处理的 「区」 经行进一步的精细化处理：
+    ```cpp
+    // DetourTileCacheRegion.cpp
+    // dtStatus filterSmallRegions(..., unsigned short& maxRegionId, ...)
+    const int nreg = maxRegionId + 1;
+    dtFixedArray<dtLayerRegion> regions(...);
+    regions.set(0);
+    for(int i = 0; i < nreg; ++i)
+      regions[i] = dtLayerRegion(i);
+    
+    // 遍历记录 「区」 的邻居 「区」
+    for(auto& [x, y] : layer)
+    {
+      unsigned short r = srcReg[x, y];
+      
+      // 取对应 r 的 region
+      dtLayerRegion& reg = regions[r];
+      reg.cellCount++;
+      reg.border |= (y == 0) || (y == h - 1) || (x == 0) || (x == w -1);
+
+      // 该 region 已处理过略过
+      if(reg.connections.size() > 0) continue;
+
+      // 保存地块信息
+      reg.AreaType = layer.area[x, y];
+
+      // 判断是否为 「区」 边缘
+      int ndir = -1;
+      for(int dir = 0; dir < 4; ++dir)
+        if(isSolidEdge(layer, srcReg, x, y, dir))
+        {
+          ndir = dir;
+          break;
+        }
+
+      // 如果是边缘，则绕边缘走一圈，记录一个 「区」 的所有邻居 「区」
+      if(ndir != -1)
+        walkContour(x, y, ndir, ..., reg.connections);
+    }
+
+    // 移除过小的 「区」
+    for(int i = 0; i < nreg; ++i)
+    {
+      dtLayerRegion& reg = regions[i];
+      // 「区」id 错误
+      if(reg.id == 0) continue;
+      // 「区」内无元素
+      if(reg.cellCount == 0) continue;
+      // 「区」已遍历过
+      if(reg.visited) continue;
+
+      dtIntArray stack;
+      dtIntArray trace;
+      
+      reg.visited = true;
+      stack.push(i);
+      
+      bool connectsToBorder = false;
+      int cellCount = 0;
+      while(stack.size())
+      {
+        int ri = stack.pop();
+        dtLayerRegion& creg = regions[ri];
+
+        connectsToBorder |= creg.border;
+        cellCount += creg.cellCount;
+        trace.push(ri);
+
+        // 遍历邻居，将未访问邻居入栈
+        for(int j = 0; j < creg.connections.size(); ++j)
+        {
+          dtLayerRegion& neireg = regions[creg.connections[j]];
+          // 过滤已遍历以及非法情况
+          if(neireg.visited) continue;
+          if(neireg.id == 0) continue;
+          stack.push(neireg.id);
+          neireg.visited = true;
+        }
+      }
+      // 「区」 所有的邻居元素合少于指定值
+      // 且处于非边缘位置，则这个 「区」 可过滤
+      if(cellCount < minRegionArea && !connectsToBorder)
+      {
+        for(int j = 0; j < trace.size(); ++j)
+        {
+          regions[trace[j]].cellCount = 0;
+          regions[trace[j]].id = 0;
+        }
+      }
+    }
+
+    // 合并小 「区」 到邻居 「区」
+    int mergeCount = 0;
+    do
+    {
+      mergeCount = 0;
+      for(int i = 0; i < nreg; ++i)
+      {
+        dtLayerRegion& reg = regions[i];
+        if(reg.id == 0) continue;
+        if(reg.cellCount == 0) continue;
+        // 若当前 「区」 超过合并限制或为边缘，则不参与合并
+        if(reg.cellCount > mergeRegionSize && reg.border) continue;
+
+        int smallest = 0xffffffff;
+        unsigned short mergeId = reg.id;
+        // 找到邻接中包含高度场块最少的 「区」
+        for(int j = 0; j < reg.connections.size(); ++j)
+        {
+          dtLayerRegion& mreg = regions[reg.connections[j]];
+          if(mreg.id == 0) continue;
+          // 包含高度场块最少且能够合并
+          if(mreg.cellCount < smallest &&
+             CanMergeWithRegion(reg, mreg) ...)
+          {
+            smallest = mreg.cellCount;
+            mergeId = mreg.id;
+          }
+        }
+
+        // 当前 id 并非合并 id
+        if(mergeId != reg.id)
+        {
+          unsigned short oldId = reg.id;
+          dtLayerRegion& target = regions[mergeId];
+          // 合并 i 块到 mergeId 的 「区」 上
+          if(mergeRegions(target, reg))
+          {
+            // 替换邻居的邻接 「区」
+            for(int j = 0; j < nreg; ++j)
+            {
+              if(regions[j].id == 0) continue;
+              if(regions[j].id == oldId)
+                regions[j].id = mergeId;
+
+              replaceNeighbour(regions[j], oldId, mergeId);
+            }
+          }
+        }
+      }
+
+    } while(mergeCount > 0);
+    ...// 一些数据处理操作压缩 「区」 id
+    ```
+    这里的两个方法与 Recast 中的 <cfunc>isSolidEdge</cfunc> 与 <cfunc>walkContour</cfunc> 几乎完全一致，如对细节存在疑惑，可参考上文【❌链接】部分。
+    这里需要重点关注的函数有两个 <cfunc>canMergeWithRegion</cfunc> 与 <cfunc>mergeRegions</cfunc>：
+    + canMergeWithRegion
+    
+    判断两个 「区」 中包含地块的类型是否一致，且互相不为多包含邻居：
+    ```cpp
+    // DetourTileCacheRegion.cpp
+    // bool canMergeWithRegion(...)
+    if(rega.areaType != regb.areaType) return false;
+    int n = 0;
+    for(int i = 0; i < rega.connections.size(); ++i)
+    {
+      if(rega.connections[i] == regb.id) ++n;
+    }
+    // 邻居次数大于 1 次
+    if(n > 1) return false;
+    return true;
+    ```
+    + mergeRegions
+    
+    将一个 「区」 中的所有邻居归并到另外一个 「区」 里，如果归入区具备边缘标志则打上该标志。
+    ```cpp
+    待补充
+    ```
+    经过该函数后所有的高度场块均被划入了对应集合，其中每个 「区」 集合即可看做一个待提取多边形。
+
+#### dtBuildTileCacheContours
+该函数用于提取多边形顶点，将集合由高度场块构成的 「区」 转化为 「顶点集」：
+```cpp
+// 遍历标记 「层」 的连接关系
+for(auto [x, y]: layer)
+{
+  // 跳过无效 「区」
+  const unsigned short ri = layer.regs[x, y];
+  if(ri == 0xffff) continue;
+
+  unsigned char res = 0;
+  for(auto [nx, ny]: getNeighbour(x, y))
+  {
+    if(layer.regs[nx, ny] != layer.regs[x, y])
+      res |= (1 << getDir(nx, ny, x, y));
+  }
+  flags[x, y] = res ^ 0xf;
+}
+
+for(auto [x, y]: layer)
+{
+  // 内部块，不含顶点
+  if(flags[x, y] == 0) continue;
+  const unsigned short ri = layer.reg[x, y];
+  // 无效 「区」 
+  if(ri == 0xffff || ri == 0) continue;
+
+  if(!walkContour(...)) return DT_FAILURE | DT_BUFFER_TOO_SMALL;
+
+  simplifyContour(...);
+
+  ...// 存储顶点的一些数据申请处理
+
+  const int contIdx = lcset.nconts++;
+  dtTileCacheContour& cont = lcset.conts[contIdx];
+  ...// cont 的一些赋值
+
+  int nnei = 0;
+  if(cont.nverts > 0)
+  {
+    for(int i = 0, j = nverts - 1; i < nverts; j = i++)
+    {
+      unsigned short lh = getCorerHeight(layer, vert, ...);
+      
+      cont.verts[j] = verts[j];
+      cont.verts[j][1] = lh;
+
+      ...// 记录 portal 信息，portal 指边缘方向
+    }
+
+    nlinks[contIdx] = nnei;
+  }
+}
+
+// 部分轮廓为内轮廓，需要合并
+for(int i = 0; i < lcset.nconts; ++i)
+{
+  dtTileCacheContour& cont = lcset.conts[i];
+  // 通过有向面积判断内轮廓或外轮廓
+  if(calcAreaOfPolygon2D(verts, nverts) < 0)
+  {
+    for(int j = 0; j < lcset.nconts; ++j)
+    {
+      dtTileCacheContour& mcont = lcset.conts[j];
+      if(i == j) continue;
+
+      if(mcont.nverts && mcont.reg == cont.reg)
+      {
+        getClosestIndices(mcont, cont, ...);
+        ...// 记录合并顶点
+      }
+    }
+
+    if(mergeIdx != -1)
+    {
+      dtTileCacheContour& mcount = lcset.conts[mergeIdx];
+      // 合并顶点集
+      mergeContours(..., mcont, cont, ...);
+    }
+  }
+}
+
+#if WITH_NAVMESH_CLUSTER_lINK
+...// Cluster Links 相关暂略过
+#endif
+```
+这里需要注意的是提取完顶点集合后得到的顶点集不一定就能用于多边形生成，因为获得的轮廓也有可能是内轮廓。在获取轮廓为内轮廓的情况下，需要将内轮廓与最近顶点的外轮廓进行合并。
+
+这里可以简单推测一下，如果内轮廓与一个外轮廓构成多边形轮廓，那么这组构成轮廓一定存在最近顶点对。否则，它俩一定构不成一个中空的多边形轮廓。
+
+除此之外，该过程还隐藏了一个细节，即生成的轮廓点上实际记录了边缘的方向，这个方向信息可为后续构建多边形图之间的连接节省额外的计算。
+
+#### dtBuildTileCachePolyMesh
+这里使用上一步骤提取的 **「顶点集」** 构建 **「凸多边形集」**。这里的凸多边形（Convex Polygon）很重要，凸多边形具备一个很好的性质：
+> Every point on every line segment between two points inside or on the boundary of the polygon remains inside or on the boundary.
+>
+>                                                                                                                       --Wikipedia
+凸多边形内任取两点构成线段上的任意点仍落在凸多边形内。该性质确保了寻路时只要多边形的起点和终点落在其边上，则多边形内任意位置均是可达的，且容易找到最短路径即连接两点的线段。
+
+现对该过程进行介绍：
+```cpp
+// DetourTileCacheBuilder.cpp
+// dtStatus dtBuildTileCachePolyMesh(...)
+// 遍历「顶点集」
+for(auto & cont : lcset.conts)
+{
+  // 略过空集，顶点少于 3 无法构成最简多边形三角形
+  if(cont.nverts < 3 || cont.area == DT_TILECACHE_NULL_AREA) continue;
+
+  // 三角剖分
+  int ntris = triangulate(cont, ...);
+  if(ntris <= 0)
+  {
+    ntris = -ntris;
+  }
+
+  // 添加并移除中间点
+  for(auto & v: cont.verts)
+  {
+    indices[j] = addVertex(v, ...);
+    if(v[3] & 0x80)
+    {
+      vflags[indices[j]] = 1;
+    }
+  }
+
+  // 构建初始多边形，实际填充的是三角形的索引
+  int npolys = 0;
+  for(int j = 0; j < ntris; ++j)
+  {
+    const unsigned short* t = &tris[j * 3];
+    if(t[0] != t[1] && t[0] != t[2] && t[2] != t[3])
+    {
+      polys[npolys * MAX_VERTS_PER_POLY + 0] = indices[t[0]];
+      polys[npolys * MAX_VERTS_PER_POLY + 1] = indices[t[1]];
+      polys[npolys * MAX_VERTS_PER_POLY + 2] = indices[t[2]];
+      npolys++;
+    }
+  }
+  // 无三角形略过
+  if(!npolys) continue;
+
+  // 合并多边形
+  int maxVertsPerPoly = MAX_VERTS_PER_POLY;
+  if(maxVertsPerPoly > 3)
+  {
+    for(;;)
+    {
+      int bestMergeVal = 0;
+      int bestPolyA, bestPolyB, bestEdgeA, bestPolyB; // = 0
+      for(auto& poly_j : polys)
+      for(auto& poly_k : polys)
+      {
+        int ea, eb;
+        int v = getPolyMergeValue(poly_j, poly_k, mesh.verts, ea, eb);
+        if(v > bestMergeVal)
+        {
+          ...// 更新所有 best 的值
+        }
+      }
+      
+      // 存在可合并多边形，合并为新的多边形
+      // 2 → 3， 3 → 4 ...
+      if(bestMergeVal > 0)
+      {
+        unsigned short* polyA = &polys[bestPolyA];
+        unsigned short* polyB = &polys[bestPolyB];
+        mergePolys(polyA, polyB, bestEdgeA, bestEdgeB);
+        memcpy(polyB, &polys[(npolys - 1)*MAX_VERTS_PER_POLY], sizeof(unsigned short)* MAX_VERTS_PER_POLY);
+        npolys--;
+      }
+      // 已不存在可合并项，结束循环
+      else
+      {
+        break;
+      }
+    }
+  }
+
+  ...// 储存多边形数据
+}
+
+for(int i = 0; i < mesh.nverts; ++i)
+{
+  // 被标记为可移除点
+  if(vflags[i])
+  {
+    // 复查一下是否可移除
+    if(!canRemoveVertex(mesh, (unsigned short)i)) continue;
+    dtStatus status = removeVertex(ctx, mesh, (unsigned short)i, maxTris);
+    ...// 错误处理
+    // 移除顶点后所有 flags 均平移以 1 - 1 对应
+    for(int j = 0; j < mesh.nverts; ++j) vflags[j] = vflags[j + 1]; 
+    --i;
+  }
+}
+
+// 构建一下多边形的邻接信息
+if(!buildMeshAdjacency(..., mesh, lcset)) return DT_FALURE | DT_OUT_OF_MEMORY;
+
+return DT_SUCCESS;
+```
+该函数提取了 **「凸多边形集」**，且多边形之间已包含连接关系，理论上这个多边形集已经可以用于构建图集，来发挥寻路算法的作用，但是由于当前近似是比较粗糙的，因此可以进一步的细化剖分，以确保寻路的精度。
+【👨‍🏭待补充内部函数细节】
+#### dtBuildTileCachePolyMeshDetail
+这一步骤是对上过程构成的 **「凸多边形集」** 进行进一步的细分，以提取精度更高的图元节点，来提高寻路算法的精度。
+
+在 UE 中该项实际是个可选项，构建前可选择勾选以开启或关闭该选项，默认提供开启的情况。
+```cpp
+// DetourTileCacheDetail.cpp
+// dtStatus dtBuildTileCachePolyMeshDetail(...)
+for(int i = 0; i < lmesh.npolys; ++i)
+{
+  int index = i*nvp*2;
+  const auto* p = &lmesh.polys[index];
+  
+  ...// 保存精细的顶点数据，以及多边形包围盒
+  // 找到一个多边形的包围区，并填充该包围区的高度
+  getLayerHeightData(layer, p, lmesh.verts, npoly, hp, stack);
+
+  // 构建多边形细节
+  if(!buildLayerPolyDetail(poly, npoly, cs, ch,
+			sampleDist, sampleMaxError, hp,
+			verts, nverts, tris, edges, samples))
+  {
+    return DT_FAILURE;
+  }
+
+  ...// 转换顶点到世界坐标并存储
+}
+```
+
+现在对其中两个函数 <cfunc>getLayerHeightData</cfunc> 和 <cfunc>buildLayerPolyDetail</cfunc> 的一些实现细节进行介绍：
++ getLayerHeightData
+  
+  该函数负责遍历多边形的顶点，并使用泛洪填充的方式，把多边形的包围盒内有高度的区域填充上高度数据，用于下一步细节多边形的生成：
+  ```cpp
+  // DetourTileCacheDetail.cpp
+  // static void getLayerHeightData(...)
+  // 遍历多边形顶点，寻找 9 邻居高度最小块作为起始点
+  for(auto& vert: verts)
+  {
+    // 在 8 向邻居中找高度最小块
+    auto&& [dmin, cx, cy] = findMinHeightsIn9Neighbors(...);
+
+    stack.push({cx, cy});
+  }
+  
+  // 找到多边形中心位置
+  auto&& [pcx, pcy] = getCenterOfPolygon(verts);
+
+  ... // 初始化操作把有值区的 data 置 1
+
+  // DFS 排出所有数据或找到中心为止，为啥要这么做？
+  // 目前能看到的是该方案可以把所有与中心无连接的孤立点剔除
+  // 如果是一个非凸结构，如内环，可以直接剔除掉这个多边形
+  while(stack.size() > 0)
+  {
+    auto&& [cx, cy] = stack.pop();
+
+    // 靠近中心结束循环
+    if(isNeareCenter(cx, cy, pcx, pcy)) break;
+
+    for(auto & [nx, ny] : get4Neighbor(cx, cy))
+    {
+      if(!inBound(nx, ny) ||              // 超出包围盒范围
+         hp.data[nx, ny] != 0 ||          // 已标记
+         !IsValid(layer.heights[nx, ny])) // 高度数据无效
+      {
+        continue;
+      }
+
+      hp.data[nx, ny] = 1;
+      stack.push({nx, ny});
+    }
+  }
+
+  memset(hp.data, 0xff, sizeof(unsigned short)*hp.width*hp.height);
+
+  // 栈内数据填充
+  for(auto& [cx, cy] : stack)
+  {
+    hp.data[cx, cy] = layer.heights[cx, cy];
+  }
+
+  // BFS 填充高度采样数据
+  int head = 0;
+  while (head*2 < stack.size())
+  {
+    int cx = stack[head*2+0];
+		int cy = stack[head*2+1];
+		head++;
+    
+    ...// 扩建 stack 大小
+
+    // 遍历 4 邻居并填充采样高度，且将邻居入队
+    for(auto&& [nx, ny] : get4Neightbor(cx, cy))
+    {
+      if(!isInBound(nx, ny) ||
+         isUnSet(hp.data[nx, ny]) ||
+         isUnSet(layer.heights[nx, ny]))
+      {
+        continue;
+      }
+
+      hp.data[nx, ny] = layer.heights[nx, ny];
+      stack.push({nx, ny});
+    }
+  }
+  ```
+  经过这一个步骤，我们就获取了一个对于当前多边形包围盒内有高度区域的高度采样盒，盒子内记录的是这个范围内的对应点的高度采样值。
+
++ buildLayerPolyDetail
+
+  该函数把当前的凸多边形进一步细化为 **「细节三角形集」**，输出新的顶点数组 `verts` 与三角形索引 `tris`。该函数按 **“先稳住边界，再补内部误差”** 的思路分为三步：
+
+  1. 对多边形边界采样并简化；
+  2. 使用边界点做一次 Delaunay 三角化；
+  3. 在多边形内部按误差继续补点，直到误差收敛。
+
+  **边界采样**
+
+  函数开始时先拷贝原始多边形顶点；如果 `sampleDist > 0`，则继续沿每条边按固定间距采样：
+
+  ```cpp
+  // DetourTileCacheDetail.cpp
+  // static bool buildLayerPolyDetail(...)
+  for (edge in polygon)
+  {
+      // 统一边方向，避免相邻多边形在共享边上采样顺序不一致
+      sortLexicographically(vj, vi);
+      // 采样数 = 1 + floor(边长 / 采样间距)
+      nn = 1 + floor(edgeLength / sampleDist);
+      for (k = 0; k <= nn; ++k)
+      {
+          pos = lerp(vj, vi, k / nn);
+          pos.y = getHeight(pos.x, pos.y, pos.z, hp) * ch;
+      }
+
+      // 若采样点到线段的最大偏差超过 sampleMaxError，则保留该点
+      simplifyByMaxDeviation(edgeSamples, sampleMaxError);
+      appendToHull(edgeSamples);
+  }
+  ```
+
+  这里最关键的是两点：
+
+  1. 采样后的高度并不是直接沿原边线插值，而是通过上一步生成的高度盒 `hp` 回查 `getHeight`，因此边界会贴合该层真实的高度场；
+  2. 处理边时先按字典序统一方向，这样相邻多边形在共享边上会得到同一组采样结果，从而避免细节网格在接缝处出现裂缝。
+
+  边界采样完成后，`hull` 中保存的是一圈外轮廓点，它既包含原始顶点，也可能包含新插入的边界细分点。
+
+  **基础三角化**
+
+  有了边界点后，函数会先做一次基础的三角化：
+
+  ```cpp
+  edges.resize(0);
+  tris.resize(0);
+  delaunayHull(nverts, verts, nhull, hull, tris, edges);
+  ```
+
+  这里调用的是文件内的 `delaunayHull`。它以边界环为约束，逐步补齐三角形面，得到一份满足 Delaunay 条件的初始细节网格。若这一步失败，则退化为简单的扇形三角化，至少保证当前多边形仍能输出可用结果。
+
+  **按误差向内部补点**
+
+  初始三角化只有边界约束，内部精度仍然可能不够。因此函数会在多边形包围盒内按 `sampleDist` 生成规则采样点，并剔除过于贴近边界的点：
+
+  ```cpp
+  for (z = z0; z < z1; ++z)
+  {
+      for (x = x0; x < x1; ++x)
+      {
+          pt = {x * sampleDist, midY, z * sampleDist};
+          if (distToPoly(nin, in, pt) > -sampleDist / 2) continue;
+
+          samples.push(x);
+          samples.push(getHeight(pt.x, pt.y, pt.z, hp));
+          samples.push(z);
+      }
+  }
+  ```
+
+  接着进入一个典型的 **误差驱动细分** 过程：反复找到“当前误差最大”的内部采样点，把它加入顶点集，并重新做一次 Delaunay 三角化。
+
+  ```cpp
+  for (iter = 0; iter < nsamples; ++iter)
+  {
+      best = findMaxErrorSample(samples, verts, tris);
+      if (best.error <= sampleMaxError) break;
+
+      verts.push(best.point);
+      delaunayHull(nverts, verts, nhull, hull, tris, edges);
+  }
+  ```
+
+  其中误差由 `distToTriMesh` 计算，本质上是 **“采样点高度” 与 “当前细节三角网在该点处插值得到的高度”** 的差值。误差大的点会优先被加入网格，因此细分结果会集中在起伏变化更明显的位置；而平坦区域通常不需要继续加点。
+
+  UE 实现还有一个小细节：在评估内部采样点时，会对 `x/z` 加一个非常小的随机扰动 `jitter`，用于避免规则网格与对称边界组合时出现不稳定的退化三角形。
+
+  整体上看，`buildLayerPolyDetail` 并不是“均匀细分”，而是一个 **边界一致、误差受控、逐步逼近真实高度场** 的细节网格构建过程。最终得到的 `tris` 仍然是同一块导航区域，但其局部高度表达会比上一步的凸多边形集精确得多。
+
+#### Construct OffMeshData
+
+#### dtCreateNavMeshData
 
 # 参考
 
