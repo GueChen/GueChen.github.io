@@ -158,21 +158,37 @@ UNavigationSystemV1::Build()
 
 **rcFilterLowHangingWalkableObstacles**
 
-标记低悬障碍物为可达区域，若一个体素块原先被标记为**不可达**，但其同位置的链表上前一个体素块可达，且前后的高度差低于最大攀爬高度 <cvar>walkableClimb</cvar>，则认为该体素块可通过攀爬到达：
+标记低悬障碍物为可达区域。若当前体素块原先被标记为**不可达**，但其在**同一格子链表中下方紧邻的前一个体素块**可达，且二者的 **`smax` 高度差** 不超过最大攀爬高度 <cvar>walkableClimb</cvar>，则会把当前体素块的区域类型补标为可走：
 
 ```cpp
 // RecastFilter.cpp
 // void rcFilterLowHangingWalkableObstacles(...)
-Δheight = Abs(curSpan.height - prevSpan.height);
+Δheight = Abs(curSpan.smax - prevSpan.smax);
 if(Δheight <= walkableClimb)
 {
-    curSpan.area = 👟;
+    curSpan.area = prevSpan.area;
 }
 ```
 
 其示意图如下所示，
 
-【❌缺示意图】
+<div class="three-container-box">
+<div class="three-container" id="low_hanging_obstacle_demo"></div>
+<div style="text-align: center; margin-top: 20px; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.42857143; color: #333;">
+<label>
+  ΔHeight:
+  <input class="slider" id="lowHangingBottomSlider" type="range" min="0.6" max="1.6" step="0.1" value="1.0">
+  <span class="slider-value">1.0</span>
+</label>
+<label>
+  walkableClimb:
+  <input class="slider" id="lowHangingClimbSlider" type="range" min="0.2" max="1.2" step="0.1" value="0.8">
+  <span class="slider-value">0.8</span>
+</label>
+</div>
+<p id="lowHangingStatus" style="text-align:center; margin-top: 10px;"></p>
+</div>
+<script type="module" src="{{ site.baseurl }}/assets/js/navigation/low_hanging_obstacle.js"></script>
 
 **rcFilterLedgeSpans**
 
@@ -290,16 +306,10 @@ chf.span.h = nextSpan.smin - curSpan.smax; // 记录站立空间的高度
 
 + 接着通过两次遍历填充生成距离场，填充规则为四方邻居距离加 2，对角邻居距离加 3（$3 \approx 2\sqrt{2}$）：
 
-  1. 第一次遍历，对 $9 \times 9$ 的方格内下方与左侧的 4 个邻居块进行填充；
+  1. 第一次遍历，对 $9 \times 9$ 的方格内上方与左侧的 4 个邻居块进行填充；
   
-  2. 第二次遍历，对 $9 \times 9$ 的方格内上方与右侧的 4 个邻居块进行填充。
-  
-     【❌缺图】
-    <link rel="stylesheet" href="{{site.baseurl}}/assets/css/grid.css">
-    <div class="inline-grid" data-size="10"></div>
-    <p style="text-align:center;">点击格子可切换障碍，拖拽可连续涂抹；下方控件可分步查看 Boundary / Pass 1 / Pass 2 / Erode 的结果。</p>
-    <script src="{{ site.baseurl }}/assets/js/grid.js"></script>
-  
+  2. 第二次遍历，对 $9 \times 9$ 的方格内下方与右侧的 4 个邻居块进行填充。
+   
   填充时取填入的最小值。
   
 + 对于距离场值小于 <cvar>walkableRadius</cvar> 的块即判定为不可行区域：
@@ -310,6 +320,14 @@ chf.span.h = nextSpan.smin - curSpan.smax; // 记录站立空间的高度
   if (dist[i] < thr)
       chf.areas[i] = RC_NULL_AREA;
   ```
+
+可参考下方 demo 来模拟整个图生成距离场的过程：
+
+  <link rel="stylesheet" href="{{site.baseurl}}/assets/css/grid.css">
+  <p>
+    <div class="inline-grid" data-size="15"></div>
+  </p>
+  <script src="{{ site.baseurl }}/assets/js/grid.js"></script>
 
 至此，体素生成阶段已完成。
 
@@ -1479,7 +1497,8 @@ for(int i = 0; i < lmesh.npolys; ++i)
           pos.y = getHeight(pos.x, pos.y, pos.z, hp) * ch;
       }
 
-      // 若采样点到线段的最大偏差超过 sampleMaxError，则保留该点
+      // 若采样点到线段的最大偏差超过 sampleMaxError
+      // 则保留该点，意味着该点应作为细节多边形继续分化
       simplifyByMaxDeviation(edgeSamples, sampleMaxError);
       appendToHull(edgeSamples);
   }
@@ -1494,7 +1513,7 @@ for(int i = 0; i < lmesh.npolys; ++i)
 
   **基础三角化**
 
-  有了边界点后，函数会先做一次基础的三角化：
+  有了新的边界点后，函数会先做一次基础的三角化：
 
   ```cpp
   edges.resize(0);
@@ -1502,7 +1521,7 @@ for(int i = 0; i < lmesh.npolys; ++i)
   delaunayHull(nverts, verts, nhull, hull, tris, edges);
   ```
 
-  这里调用的是文件内的 `delaunayHull`。它以边界环为约束，逐步补齐三角形面，得到一份满足 Delaunay 条件的初始细节网格。若这一步失败，则退化为简单的扇形三角化，至少保证当前多边形仍能输出可用结果。
+  调用的是 `delaunayHull`。它以边界环为约束，逐步补齐三角形面，得到一份满足 Delaunay 条件的初始细节网格。若这一步失败，则退化为简单的扇形三角化，至少保证当前多边形仍能输出可用结果。
 
   **按误差向内部补点**
 
@@ -1541,6 +1560,7 @@ for(int i = 0; i < lmesh.npolys; ++i)
   UE 实现还有一个小细节：在评估内部采样点时，会对 `x/z` 加一个非常小的随机扰动 `jitter`，用于避免规则网格与对称边界组合时出现不稳定的退化三角形。
 
   整体上看，`buildLayerPolyDetail` 并不是“均匀细分”，而是一个 **边界一致、误差受控、逐步逼近真实高度场** 的细节网格构建过程。最终得到的 `tris` 仍然是同一块导航区域，但其局部高度表达会比上一步的凸多边形集精确得多。
+  
 
 #### Construct OffMeshData
 

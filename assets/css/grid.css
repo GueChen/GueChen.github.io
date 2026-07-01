@@ -1,7 +1,12 @@
 .inline-grid {
     margin: 16px auto;
-    max-width: max-content;
-    --cell-size: 2.6em;
+    width: 100%;
+    max-width: 100%;
+    overflow: hidden;
+    --demo-scale: 1;
+    --cell-size: 2.6rem;
+    --grid-gap: 4px;
+    box-sizing: border-box;
 }
 
 .inline-grid-widget {
@@ -9,10 +14,13 @@
     flex-direction: column;
     align-items: center;
     gap: 12px;
-    padding: 14px;
-    border-radius: 14px;
+    width: 100%;
+    max-width: 100%;
+    padding: calc(14px * var(--demo-scale));
+    border-radius: calc(14px * var(--demo-scale));
     background: rgba(20, 24, 30, 0.78);
     box-shadow: 0 10px 28px rgba(0, 0, 0, 0.25);
+    box-sizing: border-box;
 }
 
 .inline-grid-toolbar,
@@ -22,18 +30,24 @@
     flex-wrap: wrap;
     align-items: center;
     justify-content: center;
-    gap: 8px;
+    gap: calc(8px * var(--demo-scale));
 }
 
 .inline-grid-button,
 .inline-grid-phase {
-    padding: 6px 10px;
+    padding: calc(6px * var(--demo-scale)) calc(10px * var(--demo-scale));
     border: 1px solid rgba(255, 255, 255, 0.14);
     border-radius: 999px;
     background: rgba(255, 255, 255, 0.06);
     color: #f3f6fb;
     cursor: pointer;
+    font-size: clamp(0.72rem, calc(0.92rem * var(--demo-scale)), 0.92rem);
     transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+
+.inline-grid-button[data-action="play"] {
+    min-width: calc(11ch * var(--demo-scale));
+    text-align: center;
 }
 
 .inline-grid-button:hover,
@@ -47,27 +61,47 @@
 .inline-grid-radius {
     display: inline-flex;
     align-items: center;
-    gap: 8px;
+    gap: calc(8px * var(--demo-scale));
     color: #f3f6fb;
     font-family: monospace;
+    font-size: clamp(0.72rem, calc(0.92rem * var(--demo-scale)), 0.92rem);
 }
 
 .inline-grid-status {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    max-width: 36rem;
+    width: 100%;
+    max-width: min(36rem, 100%);
     color: #f3f6fb;
+    font-size: clamp(0.72rem, calc(0.92rem * var(--demo-scale)), 0.92rem);
     text-align: center;
+    overflow-wrap: anywhere;
 }
 
 .inline-grid-status strong {
-    font-size: 1rem;
+    font-size: clamp(0.82rem, calc(1rem * var(--demo-scale)), 1rem);
 }
 
 .distance-grid {
     display: grid;
-    gap: 4px;
+    gap: var(--grid-gap);
+}
+
+.distance-grid-wrap {
+    position: relative;
+    display: inline-block;
+}
+
+.distance-grid-focus {
+    position: absolute;
+    display: none;
+    border: 3px dashed rgba(191, 219, 254, 0.98);
+    border-radius: calc(12px * var(--demo-scale));
+    background: rgba(37, 99, 235, 0.08);
+    box-shadow: 0 0 0 2px rgba(30, 64, 175, 0.38);
+    pointer-events: none;
+    z-index: 5;
 }
 
 .distance-grid .cell {
@@ -75,11 +109,11 @@
     height: var(--cell-size);
     padding: 0;
     border: 0;
-    border-radius: 10px;
+    border-radius: calc(10px * var(--demo-scale));
     background: #1d4f91;
     color: #f3f6fb;
     font-family: monospace;
-    font-size: 0.92rem;
+    font-size: clamp(0.68rem, calc(var(--cell-size) * 0.36), 0.92rem);
     cursor: pointer;
     user-select: none;
     transition: transform 0.12s ease, box-shadow 0.12s ease, background-color 0.12s ease, opacity 0.12s ease;
@@ -95,17 +129,27 @@
     color: #d1d5db;
 }
 
-.distance-grid .cell.is-boundary {
-    background: #c97a13;
-    color: #fff7ed;
-}
-
 .distance-grid .cell.is-safe {
-    background: #1f7a8c;
+    background: #2f9e44;
 }
 
 .distance-grid .cell.is-safe.is-deep {
-    background: #198754;
+    background: #1f6f35;
+}
+
+.distance-grid .cell.is-infinite {
+    background: #1f6f35;
+}
+
+.distance-grid .cell.is-updated {
+    background: #2563eb;
+    color: #eff6ff;
+}
+
+.distance-grid .cell.is-center {
+    outline: 3px solid rgba(191, 219, 254, 0.98);
+    outline-offset: -3px;
+    box-shadow: inset 0 0 0 1px rgba(30, 64, 175, 0.55);
 }
 
 .distance-grid .cell.is-eroded {
@@ -115,7 +159,7 @@
 
 .inline-grid-legend {
     color: #f3f6fb;
-    font-size: 0.92rem;
+    font-size: clamp(0.72rem, calc(0.92rem * var(--demo-scale)), 0.92rem);
 }
 
 .legend-chip {
@@ -131,12 +175,16 @@
     background: #4b5563;
 }
 
-.legend-chip.is-boundary {
-    background: #c97a13;
+.legend-chip.is-safe {
+    background: #2f9e44;
 }
 
-.legend-chip.is-safe {
-    background: #1f7a8c;
+.legend-chip.is-updated {
+    background: #2563eb;
+}
+
+.legend-chip.is-infinite {
+    background: #1f6f35;
 }
 
 .legend-chip.is-eroded {
