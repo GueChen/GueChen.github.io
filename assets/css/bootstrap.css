@@ -1555,7 +1555,7 @@ pre code {
   overflow-y: scroll;
 }
 
-.post-background{
+/* .post-background{
   padding-right: 0px;
   margin-right: auto;
   margin-left: auto;
@@ -1576,7 +1576,9 @@ pre code {
   .container {
     width: 1170px;
   }
-}
+} */
+
+
 .container-fluid {
   padding-right: 15px;
   padding-left: 15px;

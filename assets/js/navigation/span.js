@@ -28,7 +28,7 @@ addSpan(inX, inY, inMinH, inMaxH){
         this.spans[index] = newSpan;
     } else {
         let currentSpan = this.spans[index];
-        while (currentSpan.getNext() !== null) {
+        while (currentSpan && currentSpan.getNext() !== null) {
             currentSpan = currentSpan.getNext();
         }
         currentSpan.setNext(newSpan);

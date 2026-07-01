@@ -31,6 +31,9 @@ display_header:
  - '这使你充满了决心.-♥'
  - 'you-are-filled-with-determination.-♥'
 author: GueChen
+markdown: kramdown
+kramdown:
+  toc_levels: 1..6
 # Build settings
 # theme: minima
 plugins:

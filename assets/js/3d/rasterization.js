@@ -73,6 +73,9 @@ window.GeometryData = {
         gridHeight : gridHeight
     }
 };
+window.Voxelization = {
+    camera : camera
+};
 
 // Lighting
 const light = new THREE.DirectionalLight(0xffffff, 1);

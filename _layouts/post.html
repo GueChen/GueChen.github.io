@@ -5,6 +5,10 @@ layout : default
 {% include page_title.html %}
 
 <div class="post-background">
+  <div class="post-flex-row">
+    <div class="toc-sidebar-container" id="fill-blank">
+    </div>
+<!--  文章正文 -->
     <div class="post-box">
         <div class="post-contents">
         <div class="postlist-container">
@@ -12,6 +16,32 @@ layout : default
         </div>    
       </div>
     </div>
+
+<!-- 目录相关 -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tocbot/4.32.2/tocbot.css">
+    <!-- <div class="toc-sidebar-container" id="toc-container"> -->
+      <aside class="toc-sidebar" id="toc-side">
+        <h2>目录</h2>
+        <nav id="toc"></nav> <!-- TOC will generate here -->
+      </aside>
+    <script src="{{ site.baseurl }}/assets/js/scrollevent.js"></script>
+    <!-- Add Tocbot JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tocbot/4.32.2/tocbot.min.js"></script>
+    <script>
+      tocbot.init({
+      // Where to render the table of contents.
+      tocSelector: '#toc',
+      // Where to grab the headings to build the table of contents.
+      contentSelector: '.postlist-container',
+      // Which headings to grab inside of the contentSelector element.
+      headingSelector: 'h1, h2, h3',
+      // For headings inside relative or absolute positioned containers within content.
+      hasInnerContainers: true,
+    });
+    </script>
+    </div>
+  <!-- </div> -->
 </div>
+
 
 <script src="{{ site.baseurl }}/assets/js/pagetypewriter.js"></script>

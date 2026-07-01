@@ -67,6 +67,7 @@ pre, code {
     font-family: Menlo, Monaco, Consolas, "Courier New", monospace;
     padding: 9.5px;
     margin: 0 0 10px;
+    max-width: 100%;
     font-size: 13px;
     line-height: 1.42857143;
     color: #333;
@@ -95,6 +96,7 @@ pre > code {
 .highlight { border-radius: 3px; background: #eeeeff; }
 .highlighter-rouge .highlight { background: #eeeeff; }
 .language-plaintext {
+    max-width: 80%;
     padding: -0px 4px;
     font-size: 85%;
     color: #c7254e;

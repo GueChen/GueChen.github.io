@@ -3,18 +3,18 @@ import {OrbitControls} from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples
 import { spanGrids } from "./span.js";
 
 const geomBufferData = window.GeometryData?.bufferData || [];
-
 const gridData = window.GeometryData?.gridData || [];
+
 let gridSize = gridData.gridSize, gridDivisions = gridData.gridDivisions;
 const gridHeight = gridData.gridHeight;
-const realCellSize = gridSize / gridDivisions;
-const bmin = -gridSize / 2, bmax = gridSize / 2;
-
-const spans = new spanGrids(gridDivisions);
+let realCellSize = gridSize / gridDivisions;
+let bmin = -gridSize / 2, bmax = gridSize / 2;
+let cellHeight = $("#cellHeightSlider").val() || 0.05;
+let spans = new spanGrids(gridDivisions);
 
 const $container = $('#rasterize_voxel')
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(75, $container.width() / $container.height(), 0.1, 1000);
+const camera = window.Voxelization?.camera || new THREE.PerspectiveCamera(75, $container.width() / $container.height(), 0.1, 1000);
 camera.position.z = 4;
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(window.devicePixelRatio);
@@ -33,7 +33,8 @@ controls.mouseButtons = {
 
 
 RasterizeTriangle(geomBufferData);
-drawBoxUsingSpanData();
+let boxmeshes = [];
+drawBoxUsingSpanData(boxmeshes);
 
 let gridHelper = new THREE.GridHelper(gridSize, gridDivisions, 0x444444, 0x888888);
 gridHelper.position.y = gridHeight;
@@ -43,17 +44,6 @@ scene.add(gridHelper);
 const light = new THREE.DirectionalLight(0xffffff, 1);
 light.position.set(5, 5, 5).normalize();
 scene.add(light);
-
-// if (geomBufferData == null) {
-//     console.log("bufferData is null, please check the data source.");
-// }
-// else {
-//     console.log("ths buffer dat is:" + geomBufferData);
-//     for(let i = 0; i < geomBufferData.count; i++){
-//         const pos = new THREE.Vector3().fromBufferAttribute(geomBufferData, i);
-//         console.log(`the buffer data is:${pos.x}, ${pos.y}, ${pos.z}`);
-//     }
-// }
 
 function animate() {
     requestAnimationFrame(animate);
@@ -74,21 +64,31 @@ window.addEventListener('resize', () => {
 
 const $tileSlider = $("#tileSizeSlider");
 const $cellSlider = $("#cellSizeSlider");
+const $cellHeightSlider = $("#cellHeightSlider");
+
 $tileSlider.on('input', ()=> {
     let tileSize = parseFloat($tileSlider.val());
     let cellSize = parseFloat($cellSlider.val());
     ReComputeGridSize(tileSize, cellSize);
+    RerasterizeSpans();
 });
 
 $cellSlider.on('input', ()=> {
     let tileSize = parseFloat($tileSlider.val());
     let cellSize = parseFloat($cellSlider.val());
     ReComputeGridSize(tileSize, cellSize);
+    RerasterizeSpans();
+
 });
 
-function drawBoxUsingSpanData()
+$cellHeightSlider.on('input', ()=> {
+    cellHeight = parseFloat($cellHeightSlider.val());
+    RerasterizeSpans();
+});
+
+function drawBoxUsingSpanData(boxmeshes)
 {
-    const boxGeometry = new THREE.BoxGeometry(realCellSize, realCellSize, realCellSize);
+    const boxGeometry = new THREE.BoxGeometry(realCellSize, cellHeight, realCellSize);
     const boxMaterial = new THREE.MeshBasicMaterial({ color: 0x5566dd, wireframe: true });
     const spanscount = spans.size * spans.size;
     for(let i = 0; i < spanscount; i++)
@@ -101,16 +101,16 @@ function drawBoxUsingSpanData()
             {
                 const xIndex = Math.floor(i % spans.size);
                 const zIndex = Math.floor(i / spans.size);
-                const yMin = currentSpan.minH;
-                const yMax = currentSpan.maxH;
+                const yMin = currentSpan.minH * cellHeight;
+                const yMax = currentSpan.maxH * cellHeight;
 
-                const xpos = xIndex * realCellSize + realCellSize / 2 + bmin;
-                const zpos = zIndex * realCellSize + realCellSize / 2 + bmin;
+                const xpos = (xIndex) * realCellSize + realCellSize / 2 + bmin;
+                const zpos = (zIndex) * realCellSize + realCellSize / 2 + bmin;
 
                 const boxMesh = new THREE.Mesh(boxGeometry, boxMaterial);
                 boxMesh.position.set(xpos, (yMin + yMax) / 2, zpos);
-                scene.add(boxMesh.clone());
-
+                scene.add(boxMesh);
+                boxmeshes.push(boxMesh);
                 currentSpan = currentSpan.getNext();
             }
         }
@@ -124,15 +124,31 @@ function RasterizeTriangle(tiranglePos)
         const pos = new THREE.Vector3().fromBufferAttribute(tiranglePos, i);
         let xIndex = Math.floor((pos.x - bmin) / realCellSize);
         let zIndex = Math.floor((pos.z - bmin) / realCellSize);
-
-        spans.addSpan(xIndex, zIndex, pos.y, pos.y);
+        let yIndex = Math.floor((pos.y - 0.0) / cellHeight);
+        spans.addSpan(xIndex, zIndex, yIndex, yIndex + 1);
     }
 }
 
 function ReComputeGridSize(tileSize, cellSize) {
     scene.remove(gridHelper);
+    gridSize = tileSize;
     gridDivisions = Math.floor(tileSize / cellSize)
-    gridHelper = new THREE.GridHelper(tileSize, gridDivisions, 0x444444, 0x888888);
+    gridHelper = new THREE.GridHelper(gridSize, gridDivisions, 0x444444, 0x888888);
     gridHelper.position.y = gridHeight;
     scene.add(gridHelper);
+
+    // update the grid size and cell size
+    realCellSize = gridSize / gridDivisions;
+    bmin = -gridSize / 2, bmax = gridSize / 2;
+}
+
+function RerasterizeSpans(){
+    spans = new spanGrids(gridDivisions);
+    RasterizeTriangle(geomBufferData);
+    for(let i = 0; i < boxmeshes.length; i++)
+    {
+        scene.remove(boxmeshes[i]);
+    }
+    boxmeshes = [];
+    drawBoxUsingSpanData(boxmeshes);
 }
