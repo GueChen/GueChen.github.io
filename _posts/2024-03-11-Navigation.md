@@ -91,10 +91,10 @@ UNavigationSystemV1::Build()
 
 + 三角面体素化 - <cfunc>rcRasterizeTriangles</cfunc>
   
-  该步骤中将使用三角面生成以高度场表示的占据体素，示意图如下所示:
+  该步骤实际是把碰撞体拆解为三角面，生成以高度场表示的占据体素，在编辑器中体素化可视化示意图如下:
   <div style="text-align:center;"><img src='{{ site.baseurl }}\assets\img\post\navigation\voxel_heightfield.png' width=500></div>
 
-  一个三角面体素化的示意如下所示：
+  对于一个拆分的三角面，首先对三个顶点进行体素化，下图为一个三维空间的三角面三个顶点分别体素化的示意：
   <!-- 3d 演示部分 -->
   
   <link rel="stylesheet" href="{{site.baseurl}}/assets/css/3d/3dcontainer.css">
@@ -106,38 +106,41 @@ UNavigationSystemV1::Build()
         }
   </script>
   <div class="three-container-box">
-  <div class="three-container" id="threeBox"></div>
   <div class="three-container" id="rasterize_voxel"></div>
   <!-- <button id="myButton" style="top: 50px; left: 20px; z-index: 10;">Click me</button>   -->
   <div id="controls" style="text-align: center; margin-top: 20px;">
   </div>
   <label>
     Tile Size:
-    <input class="slider" id="tileSizeSlider" type="range" min="4" max="10" step="1" value="4">
-    <span class="slider-value" id="tileSizeValue">4</span>
+    <input class="slider" id="tileSizeSlider" type="range" min="4" max="10" step="1" value="7">
+    <span class="slider-value" id="tileSizeValue">7</span>
   </label>
   <label>
     Cell Size:
-    <input class="slider" id="cellSizeSlider" type="range" min="0.1" max="1" step="0.1" value="0.1">
-    <span class="slider-value" id="cellSizeValue">0.1</span>
+    <input class="slider" id="cellSizeSlider" type="range" min="0.1" max="1" step="0.1" value="0.6">
+    <span class="slider-value" id="cellSizeValue">0.6</span>
   </label>
   <label>
     Cell Height:
-    <input class="slider" id="cellHeightSlider" type="range" min="0.05" max="1" step="0.05" value="0.05">
-    <span class="slider-value" id="cellHeightValue">0.05</span>
+    <input class="slider" id="cellHeightSlider" type="range" min="0.05" max="1" step="0.05" value="0.5">
+    <span class="slider-value" id="cellHeightValue">0.5</span>
   </label>
   </div>
-  <script type="module" src="{{ site.baseurl }}/assets/js/3d/rasterization.js"></script>
   <script type="module" src="{{ site.baseurl }}/assets/js/navigation/rasterization_voxel.js"></script>
 
-  三角形体素化思路为先沿单一方向对三角形面进行切割形成长条，后再对切割出的长条进行细分，形成体素。
+  三个体素块已足够描述一个体素三角形，但为了方便后续合并处理过滤空间上的碰撞重叠影响，需要继续扫描填充，计算三角面对应的离散体素块。
+
+  从顶点生成整个三角面的体素思路与光栅化的扫描线方案拥有一定的相似性，可以先沿单一方向对三角形面进行切割形成长条，再对切割出的长条进行填充。
 
   实现上，分为以下步骤：
   1. 首先沿边遍历，对 z 方向进行切割，记录每个 z 条上的 x 最值点，获取 x 方向长条；
-  2. 接着对 x 方向进行切割，保证每一个切割块均在超参数 `CellSize` 内。
+  2. 接着对 x 方向进行切割填充，保证每一个切割块均在超参数 `CellSize` 内。
 
-  体素化与光栅化的扫描线方案存在相似性，其平面示意如下图所示：
-  <div style="text-align:center;"><img src='{{ site.baseurl }}\assets\img\post\navigation\voxel_tri_process.png' width=800></div>
+  其平面示意如下图所示：
+  <div style="text-align:center; max-width: 840px; margin: 0 auto;">
+    <div id="voxel_scanline_demo" style="width: 100%;"></div>
+  </div>
+  <script src="{{ site.baseurl }}/assets/js/navigation/voxel_scanline_demo.js"></script>
 
   同时存在两个优化情况：
   1. 当三角形仅占据一个体素 「span」 时，不用切割，可直接记录其 y 方向上高度，填入高度场；
@@ -158,7 +161,7 @@ UNavigationSystemV1::Build()
 
 **rcFilterLowHangingWalkableObstacles**
 
-标记低悬障碍物为可达区域。若当前体素块原先被标记为**不可达**，但其在**同一格子链表中下方紧邻的前一个体素块**可达，且二者的 **`smax` 高度差** 不超过最大攀爬高度 <cvar>walkableClimb</cvar>，则会把当前体素块的区域类型补标为可走：
+标记低悬障碍物为可达区域。若当前体素块原先被标记为**不可达**，但其在**同一格子链表中下方紧邻的前一个体素块**可达，且二者的**表面高度差**<cvar>smax</cvar>  不超过最大攀爬高度 <cvar>walkableClimb</cvar>，则会把当前体素块的区域类型补标为可走：
 
 ```cpp
 // RecastFilter.cpp
