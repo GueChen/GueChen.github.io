@@ -18,8 +18,9 @@
     max-width: 100%;
     padding: calc(14px * var(--demo-scale));
     border-radius: calc(14px * var(--demo-scale));
-    background: rgba(20, 24, 30, 0.78);
-    box-shadow: 0 10px 28px rgba(0, 0, 0, 0.25);
+    background: #ffffff;
+    color: #1f2937;
+    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
     box-sizing: border-box;
 }
 
@@ -36,10 +37,10 @@
 .inline-grid-button,
 .inline-grid-phase {
     padding: calc(6px * var(--demo-scale)) calc(10px * var(--demo-scale));
-    border: 1px solid rgba(255, 255, 255, 0.14);
+    border: 1px solid #cbd5e1;
     border-radius: 999px;
-    background: rgba(255, 255, 255, 0.06);
-    color: #f3f6fb;
+    background: #f8fafc;
+    color: #1f2937;
     cursor: pointer;
     font-size: clamp(0.72rem, calc(0.92rem * var(--demo-scale)), 0.92rem);
     transition: background-color 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
@@ -53,8 +54,8 @@
 .inline-grid-button:hover,
 .inline-grid-phase:hover,
 .inline-grid-phase.is-active {
-    background: rgba(87, 181, 231, 0.22);
-    border-color: rgba(87, 181, 231, 0.55);
+    background: #dbeafe;
+    border-color: #60a5fa;
     transform: translateY(-1px);
 }
 
@@ -62,7 +63,7 @@
     display: inline-flex;
     align-items: center;
     gap: calc(8px * var(--demo-scale));
-    color: #f3f6fb;
+    color: #1f2937;
     font-family: monospace;
     font-size: clamp(0.72rem, calc(0.92rem * var(--demo-scale)), 0.92rem);
 }
@@ -73,7 +74,7 @@
     gap: 4px;
     width: 100%;
     max-width: min(36rem, 100%);
-    color: #f3f6fb;
+    color: #1f2937;
     font-size: clamp(0.72rem, calc(0.92rem * var(--demo-scale)), 0.92rem);
     text-align: center;
     overflow-wrap: anywhere;
@@ -96,10 +97,10 @@
 .distance-grid-focus {
     position: absolute;
     display: none;
-    border: 3px dashed rgba(191, 219, 254, 0.98);
+    border: 3px dashed rgba(37, 99, 235, 0.8);
     border-radius: calc(12px * var(--demo-scale));
-    background: rgba(37, 99, 235, 0.08);
-    box-shadow: 0 0 0 2px rgba(30, 64, 175, 0.38);
+    background: rgba(59, 130, 246, 0.08);
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
     pointer-events: none;
     z-index: 5;
 }
@@ -110,55 +111,56 @@
     padding: 0;
     border: 0;
     border-radius: calc(10px * var(--demo-scale));
-    background: #1d4f91;
-    color: #f3f6fb;
+    background: #e5e7eb;
+    color: #111827;
     font-family: monospace;
     font-size: clamp(0.68rem, calc(var(--cell-size) * 0.36), 0.92rem);
     cursor: pointer;
     user-select: none;
+    box-shadow: inset 0 0 0 1px #cbd5e1;
     transition: transform 0.12s ease, box-shadow 0.12s ease, background-color 0.12s ease, opacity 0.12s ease;
 }
 
 .distance-grid .cell:hover {
     transform: scale(1.05);
-    box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.12);
+    box-shadow: inset 0 0 0 1px #93c5fd, 0 0 0 2px rgba(59, 130, 246, 0.16);
 }
 
 .distance-grid .cell.is-blocked {
-    background: #4b5563;
-    color: #d1d5db;
+    background: #9ca3af;
+    color: #111827;
 }
 
 .distance-grid .cell.is-safe {
-    background: #2f9e44;
+    background: #86efac;
 }
 
 .distance-grid .cell.is-safe.is-deep {
-    background: #1f6f35;
+    background: #4ade80;
 }
 
 .distance-grid .cell.is-infinite {
-    background: #1f6f35;
+    background: #bbf7d0;
 }
 
 .distance-grid .cell.is-updated {
-    background: #2563eb;
-    color: #eff6ff;
+    background: #93c5fd;
+    color: #111827;
 }
 
 .distance-grid .cell.is-center {
-    outline: 3px solid rgba(191, 219, 254, 0.98);
+    outline: 3px solid rgba(37, 99, 235, 0.75);
     outline-offset: -3px;
-    box-shadow: inset 0 0 0 1px rgba(30, 64, 175, 0.55);
+    box-shadow: inset 0 0 0 1px rgba(30, 64, 175, 0.25);
 }
 
 .distance-grid .cell.is-eroded {
-    background: #9b2c2c;
-    color: #fee2e2;
+    background: #fca5a5;
+    color: #111827;
 }
 
 .inline-grid-legend {
-    color: #f3f6fb;
+    color: #1f2937;
     font-size: clamp(0.72rem, calc(0.92rem * var(--demo-scale)), 0.92rem);
 }
 
@@ -172,21 +174,21 @@
 }
 
 .legend-chip.is-blocked {
-    background: #4b5563;
+    background: #9ca3af;
 }
 
 .legend-chip.is-safe {
-    background: #2f9e44;
+    background: #86efac;
 }
 
 .legend-chip.is-updated {
-    background: #2563eb;
+    background: #93c5fd;
 }
 
 .legend-chip.is-infinite {
-    background: #1f6f35;
+    background: #bbf7d0;
 }
 
 .legend-chip.is-eroded {
-    background: #9b2c2c;
+    background: #fca5a5;
 }
