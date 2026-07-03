@@ -378,10 +378,7 @@ dst[i] = (sum(neigborsSrc) + 5) / 9;
 
 + PartⅠ - rcGatherRegionsNoFilter
 
-  对体素块进行标记，主要过程发生在 <cfunc>rcGatherRegionsNoFilter</cfunc> 中，具体过程如下：
-
-  首先标记 「 **边界** 」（**Border**） 区：
-
+  首先对体素块进行「 **边界** 」（**Border**）标记：
   ```cpp
   // RecastRegion.cpp
   // bool rcGatherRegionNoFilter(...)
@@ -419,27 +416,46 @@ dst[i] = (sum(neigborsSrc) + 5) / 9;
 
   具体了解一下两个函数的实现：
 
-  + floodRegion
+  + **floodRegion**
+  
+    采用四邻居的深度优先搜索（DFS）遍历填充集合归属，后使用 「 **region** 」 代称归属集合:
+    > 💡<cvar>regionId</cvar> 是最重要的输入参数，它是一个递增的整数，仅代表「 **region** 」的编号。
 
-    找到一个体素块，检查它的八邻居，若存在与其 「 **区块** 」 （area） 一致，但已有集合标记 「 **区域** 」（region） 的连通邻居，则该块的 「 **区域** 」所属应与该邻居保持一致；
+    1. 传入的体素块会先把 「 **region** 」定义为 <cvar>regionId</cvar> 并压入栈 <cvar>stack</cvar> 中;
 
-    否则，该块应视为一个新的 「 **区域** 」，并将满足距离的非标记连通四邻居标为相同的 「 **区域** 」，构成一个新的体素集合。
+    2. 每次取出栈 <cvar>stack</cvar> 中的一个元素 <cvar>span</cvar>，检查八向连通邻居，若 <cvar>area</cvar> 一致，但已有 「 **region** 」 归属，则不用填充本轮输入的 <cvar>regionId</cvar>，可回退归属为 **0**，不继续向外扩张，等待下一个步骤获取邻居的归属标记。
 
-    > **区域** 只是对其中集合的一种称呼，没有特别含义，把它看作是集合划分即可
+    3. 否则，该块保留 <cvar>regionId</cvar> 作为自己的 「 **region** 」，并将满足条件的连通四邻居标为相同的 <cvar>regionId</cvar>，构成一个新的归属集合，并压入栈继续迭代。
+
+    <div id="flood_region_conflict_demo" style="margin: 12px 0 12px;"></div>
+     
+    <div id="flood_region_fill_demo" style="margin: 12px 0 4px;"></div>
+.
+    <script src="{{ site.baseurl }}/assets/js/navigation/flood_region_demo.js"></script>
+
+    另外值得注意的是，在一轮填充中被标记的区域，会把 「 **dist** 」 标记为 0，代表本轮淹没的洼地。
+
+  + **expandRegions**
+
+    该步骤不生成新的「 **region** 」，而是先把所有满足以下条件的体素块收集进栈 <cvar>stack</cvar>：
+
+    <div style="text-align:center;">
+    $$
+    \begin{cases}
+    span.dist \ge level \\
+    span.region = 0
+    \end{cases}
+    $$
+    </div>
+
+    随后逐个检查这些候选的 **四连通邻居**。若邻居与当前体素 <cvar>area</cvar> 一致、已有 <cvar>region</cvar> 归属且不是边界区域，则当前体素可继承该邻居的区域。
+
+    若存在多个可取集合，则取 <cvar>srcDist + 2</cvar> 最小的那个邻居；也就是说，优先归入距离场意义上“更近”的已有区域。
 
     其示意图如下：
 
-    【👨‍🏭待施工】
-
-  + expandRegions
-
-    对于在距离场中高于输入阈值 <cvar>level</cvar> 但未有归属集合的体素块，检查它的四个连通邻居，若其中存在 「 **区块** 」 （area） 一致，且已有集合标记 「 **区域** 」（region）的，将该体素块归入邻居集合。
-
-    若存在多个可取集合，则取距离场上最近的邻居。
-
-    其示意图如下：
-
-    【👨‍🏭待施工】
+    <div id="expand_region_demo" style="margin: 12px 0 4px;"></div>
+    <script src="{{ site.baseurl }}/assets/js/navigation/expand_region_demo.js"></script>
 
   两个过程均使用一个队列完成，思路类似 BFS，完成该阶段后所有的可行走体素块均具有自己的集合 「 **区域** 」（region）标记。
 

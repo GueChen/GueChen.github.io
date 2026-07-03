@@ -19,8 +19,12 @@
     padding: calc(14px * var(--demo-scale));
     border-radius: calc(14px * var(--demo-scale));
     background: #ffffff;
+    border: 1px solid rgba(148, 163, 184, 0.32);
     color: #1f2937;
-    box-shadow: 0 10px 28px rgba(15, 23, 42, 0.12);
+    box-shadow:
+        0 0 0 3px rgba(241, 245, 249, 0.95),
+        inset 0 0 0 1px rgba(226, 232, 240, 0.95),
+        0 10px 28px rgba(15, 23, 42, 0.12);
     box-sizing: border-box;
 }
 
