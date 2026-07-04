@@ -89,12 +89,11 @@ pre {
 }
 pre > code { 
     border: 0; 
-    padding-right: 0; 
-    padding-left: 0; 
+    padding: 0;
 }
 
-.highlight { border-radius: 3px; background: #eeeeff; }
-.highlighter-rouge .highlight { background: #eeeeff; }
+.highlight { border-radius: 3px; background: #ffffff; }
+.highlighter-rouge .highlight { background: #ffffff; }
 .language-plaintext {
     max-width: 80%;
     padding: -0px 4px;
@@ -106,4 +105,55 @@ pre > code {
 pre code {
     display: block;
     tab-size: 4;
+}
+
+.highlight pre {
+    display: flex;
+    align-items: stretch;
+    gap: 0;
+    overflow-x: auto;
+    padding: 0;
+}
+
+.highlight pre > code {
+    flex: 1 1 auto;
+    margin: 0;
+    padding: 0;
+    min-width: 0;
+}
+
+.code-line-gutter {
+    flex: 0 0 auto;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    padding: 0;
+    border-right: 1px solid rgba(148, 163, 184, 0.35);
+    color: #64748b;
+    user-select: none;
+}
+
+.code-line-gutter-number {
+    display: block;
+    min-width: 1.6em;
+    text-align: right;
+    line-height: 1.42857143;
+    padding: 0 6px 0 4px;
+    background: rgba(226, 232, 240, 0.55);
+}
+
+.code-line-gutter-number.is-even {
+    background: rgba(226, 232, 240, 0.72);
+}
+
+.code-line-content {
+    display: block;
+    padding: 0 12px;
+    line-height: 1.42857143;
+    background: #ffffff;
+    white-space: pre;
+}
+
+.code-line-content.is-even {
+    background: #f3f4f6;
 }

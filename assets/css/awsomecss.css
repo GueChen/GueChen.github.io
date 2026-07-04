@@ -1256,11 +1256,14 @@ footer {
 
 /* block quote */
 blockquote {
-    color: #808080;
-    font-size: 10px;
-    margin: 0px 0 0px;
-    border-left: 5px solid #eee;
-    padding: 0px 20px;
+    color: #4b5563;
+    font-size: 14px;
+    line-height: 1.7;
+    margin: 16px 0;
+    padding: 12px 16px;
+    background: #f3f4f6;
+    border-left: 0;
+    border-radius: 10px;
 }
 blockquote p {
     margin: 0;
