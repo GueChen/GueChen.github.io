@@ -437,20 +437,24 @@ dst[i] = (sum(neigborsSrc) + 5) / 9;
 
   + **expandRegions**
 
-    该步骤不生成新的「 **region** 」，而是先把所有满足以下条件的体素块收集进栈 <cvar>stack</cvar>：
+    该步骤不生成新的「 **region** 」，而是把上一个步骤中标记可染色的体素，尽可能的染色标记归属 「 **region** 」：
+    
+    1. 先把所有满足以下条件的体素块收集进栈 <cvar>stack</cvar>：
 
-    <div style="text-align:center;">
-    $$
-    \begin{cases}
-    span.dist \ge level \\
-    span.region = 0
-    \end{cases}
-    $$
-    </div>
+        <div style="text-align:center;">
+          $$
+          \begin{cases}
+          span.dist \ge level \\
+          span.region = 0
+          \end{cases}
+          $$
+        </div>
 
-    随后逐个检查这些候选的 **四连通邻居**。若邻居与当前体素 <cvar>area</cvar> 一致、已有 <cvar>region</cvar> 归属且不是边界区域，则当前体素可继承该邻居的区域。
+    2. 随后逐个检查栈中元素的四连通邻居，若邻居与当前体素 <cvar>area</cvar> 一致且已有 「 **region** 」 归属，则当前体素可继承该邻居的区域 「 **region** 」。
 
-    若存在多个可取集合，则取 <cvar>srcDist + 2</cvar> 最小的那个邻居；也就是说，优先归入距离场意义上“更近”的已有区域。
+    3. 若多个邻居具备不同的 「 **region** 」，则取距离场意义上最近的邻居。
+
+    4. 直到剩余栈中的元素，再无邻居具备 「 **region** 」。
 
     其示意图如下：
 

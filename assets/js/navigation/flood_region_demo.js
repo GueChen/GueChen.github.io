@@ -19,6 +19,7 @@
         border: 1px solid rgba(148, 163, 184, 0.28);
         box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
         color: #1f2937;
+        overflow: hidden;
       }
       .flood-demo-title {
         margin: 0;
@@ -139,6 +140,61 @@
         border: 2px solid rgba(255,255,255,0.9);
         border-radius: 8px;
         transform: rotate(45deg);
+      }
+      .flood-demo-steps-nav {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        gap: 7px;
+        margin-top: 8px;
+        padding: 1px 0 4px;
+        min-height: 12px;
+      }
+      .flood-demo-step-arc {
+        width: 6px;
+        height: 6px;
+        padding: 0;
+        border: 0;
+        border-radius: 999px;
+        background: #9ca3af;
+        cursor: pointer;
+        appearance: none;
+        box-sizing: border-box;
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        opacity: 0.9;
+        flex: 0 0 auto;
+        transition: width 0.2s ease, height 0.2s ease, background-color 0.2s ease, border-color 0.2s ease, opacity 0.2s ease;
+      }
+      .flood-demo-step-arc:hover {
+        background: #4b5563;
+        opacity: 1;
+      }
+      .flood-demo-step-arc.is-active {
+        width: 12px;
+        height: 12px;
+        margin: 0 1px;
+        border: 2px solid #111827;
+        border-radius: 999px;
+        background: transparent;
+        opacity: 1;
+      }
+      .flood-demo-step-arc.is-paused {
+        width: 12px;
+        height: 12px;
+      }
+      .flood-demo-step-play {
+        width: 0;
+        height: 0;
+        margin-left: 1px;
+        border-top: 3px solid transparent;
+        border-bottom: 3px solid transparent;
+        border-left: 4px solid #111827;
+      }
+      .flood-demo-step-arc:focus-visible {
+        outline: 2px solid #38bdf8;
+        outline-offset: 3px;
       }
     `;
     document.head.appendChild(style);
@@ -272,11 +328,29 @@
     }).join("");
   }
 
-  function renderCard(host, title, state) {
+  function renderStepArcs(steps, currentIndex, isPaused) {
+    return `
+      <div class="flood-demo-steps-nav" aria-label="Flood region steps">
+        ${steps.map((step, index) => `
+          <button
+            type="button"
+            class="flood-demo-step-arc${index === currentIndex ? " is-active" : ""}${index === currentIndex && isPaused ? " is-paused" : ""}"
+            data-step-index="${index}"
+            aria-label="${index === currentIndex && isPaused ? `Resume autoplay from ${step.step}` : step.step}"
+            aria-pressed="${index === currentIndex ? "true" : "false"}"
+            title="${step.step}"
+          >${index === currentIndex && isPaused ? '<span class="flood-demo-step-play" aria-hidden="true"></span>' : ""}</button>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  function renderCard(host, title, steps, currentIndex, isPaused) {
     if (!host) {
       return;
     }
 
+    const state = steps[currentIndex];
     const stepText = state.step || "";
     const stepMatch = stepText.match(/^(Step\s*\d+\s*[：:])(.*)$/);
     const stepPrefix = stepMatch ? stepMatch[1] : stepText;
@@ -296,31 +370,113 @@
           </div>
           ${renderStack(state.stackCount, state.activeStackIndex)}
         </div>
+        ${renderStepArcs(steps, currentIndex, isPaused)}
       </section>
     `;
   }
 
-  let conflictIndex = 0;
-  let fillIndex = 0;
+  const AUTO_PLAY_INTERVAL_CONFLICT = 1800;
+  const AUTO_PLAY_INTERVAL_FILL = 1900;
+
+  const conflictState = {
+    host: conflictHost,
+    title: "邻居有归属，回退等待",
+    steps: conflictSteps,
+    currentIndex: 0,
+    isPaused: false,
+    autoPlayTimer: null,
+    interval: AUTO_PLAY_INTERVAL_CONFLICT,
+  };
+
+  const fillState = {
+    host: fillHost,
+    title: "邻居无归属，四向扩散",
+    steps: fillSteps,
+    currentIndex: 0,
+    isPaused: false,
+    autoPlayTimer: null,
+    interval: AUTO_PLAY_INTERVAL_FILL,
+  };
+
+  function stopAutoPlay(state) {
+    if (state.autoPlayTimer !== null) {
+      window.clearInterval(state.autoPlayTimer);
+      state.autoPlayTimer = null;
+    }
+  }
+
+  function startAutoPlay(state, renderFn) {
+    stopAutoPlay(state);
+    state.isPaused = false;
+    state.autoPlayTimer = window.setInterval(() => {
+      state.currentIndex = (state.currentIndex + 1) % state.steps.length;
+      renderFn();
+    }, state.interval);
+  }
+
+  function pauseAutoPlay(state) {
+    stopAutoPlay(state);
+    state.isPaused = true;
+  }
 
   function renderConflict() {
-    renderCard(conflictHost, "邻居有归属，回退等待", conflictSteps[conflictIndex]);
+    renderCard(conflictState.host, conflictState.title, conflictState.steps, conflictState.currentIndex, conflictState.isPaused);
   }
 
   function renderFill() {
-    renderCard(fillHost, "邻居无归属，四向扩散", fillSteps[fillIndex]);
+    renderCard(fillState.host, fillState.title, fillState.steps, fillState.currentIndex, fillState.isPaused);
+  }
+
+  if (conflictHost) {
+    conflictHost.addEventListener("click", (event) => {
+      const target = event.target.closest("[data-step-index]");
+      if (!target) {
+        return;
+      }
+
+      const nextStep = Number(target.dataset.stepIndex);
+      if (Number.isNaN(nextStep) || nextStep < 0 || nextStep >= conflictState.steps.length) {
+        return;
+      }
+
+      if (nextStep === conflictState.currentIndex && conflictState.isPaused) {
+        startAutoPlay(conflictState, renderConflict);
+        renderConflict();
+        return;
+      }
+
+      conflictState.currentIndex = nextStep;
+      pauseAutoPlay(conflictState);
+      renderConflict();
+    });
+  }
+
+  if (fillHost) {
+    fillHost.addEventListener("click", (event) => {
+      const target = event.target.closest("[data-step-index]");
+      if (!target) {
+        return;
+      }
+
+      const nextStep = Number(target.dataset.stepIndex);
+      if (Number.isNaN(nextStep) || nextStep < 0 || nextStep >= fillState.steps.length) {
+        return;
+      }
+
+      if (nextStep === fillState.currentIndex && fillState.isPaused) {
+        startAutoPlay(fillState, renderFill);
+        renderFill();
+        return;
+      }
+
+      fillState.currentIndex = nextStep;
+      pauseAutoPlay(fillState);
+      renderFill();
+    });
   }
 
   renderConflict();
   renderFill();
-
-  window.setInterval(() => {
-    conflictIndex = (conflictIndex + 1) % conflictSteps.length;
-    renderConflict();
-  }, 1500);
-
-  window.setInterval(() => {
-    fillIndex = (fillIndex + 1) % fillSteps.length;
-    renderFill();
-  }, 1600);
+  startAutoPlay(conflictState, renderConflict);
+  startAutoPlay(fillState, renderFill);
 })();
