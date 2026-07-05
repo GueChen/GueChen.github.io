@@ -10,9 +10,10 @@
         return;
       }
 
-      const text = code.textContent || "";
-      const normalized = text.endsWith("\n") ? text.slice(0, -1) : text;
-      const lineCount = normalized.length ? normalized.split("\n").length : 1;
+      const html = (code.innerHTML || "").replace(/\r\n/g, "\n");
+      const normalizedHtml = html.endsWith("\n") ? html.slice(0, -1) : html;
+      const lines = normalizedHtml.length ? normalizedHtml.split("\n") : [""];
+      const lineCount = lines.length;
 
       const gutter = document.createElement("span");
       gutter.className = "code-line-gutter";
@@ -30,19 +31,18 @@
       }
       gutter.appendChild(fragment);
 
-      const contentLines = normalized.length ? normalized.split("\n") : [""];
       const codeFragment = document.createDocumentFragment();
-      contentLines.forEach((content, index) => {
+      lines.forEach((content, index) => {
         const line = document.createElement("span");
         line.className = "code-line-content";
         if ((index + 1) % 2 === 0) {
           line.classList.add("is-even");
         }
-        line.textContent = content.length ? content : "\u00A0";
+        line.innerHTML = content.length ? content : "&nbsp;";
         codeFragment.appendChild(line);
       });
 
-      code.textContent = "";
+      code.innerHTML = "";
       code.appendChild(codeFragment);
       pre.insertBefore(gutter, code);
       pre.dataset.lineNumbersApplied = "true";
