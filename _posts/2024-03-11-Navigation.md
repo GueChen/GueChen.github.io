@@ -107,26 +107,8 @@ UNavigationSystemV1::Build()
   </script>
   <div class="three-container-box">
   <div class="three-container" id="rasterize_voxel"></div>
-  <!-- <button id="myButton" style="top: 50px; left: 20px; z-index: 10;">Click me</button>   -->
-  <div id="controls" style="text-align: center; margin-top: 20px;">
   </div>
-  <label>
-    Tile Size:
-    <input class="slider" id="tileSizeSlider" type="range" min="4" max="10" step="1" value="7">
-    <span class="slider-value" id="tileSizeValue">7</span>
-  </label>
-  <label>
-    Cell Size:
-    <input class="slider" id="cellSizeSlider" type="range" min="0.1" max="1" step="0.1" value="0.6">
-    <span class="slider-value" id="cellSizeValue">0.6</span>
-  </label>
-  <label>
-    Cell Height:
-    <input class="slider" id="cellHeightSlider" type="range" min="0.05" max="1" step="0.05" value="0.5">
-    <span class="slider-value" id="cellHeightValue">0.5</span>
-  </label>
-  </div>
-  <script type="module" src="{{ site.baseurl }}/assets/js/navigation/rasterization_voxel.js"></script>
+  <script type="module" src="{{ site.baseurl }}/assets/js/navigation/rasterization_voxel.js?v=20260706-1"></script>
 
   三个体素块已足够描述一个体素三角形，但为了方便后续合并处理过滤空间上的碰撞重叠影响，需要继续扫描填充，计算三角面对应的离散体素块。
 
@@ -147,22 +129,14 @@ UNavigationSystemV1::Build()
   2. 当三角形在 y 方向上跨度不超过超参数 `CellHeight` 时，切割时可不用记录 y 轴的值跨度。
 
 #### 体素剔除
+在 UE 对应 <cfunc>FRecastTileGenerator::ApplyVoxelFilter</cfunc>。
 
-在 UE 中它对应 <cfunc>FRecastTileGenerator::ApplyVoxelFilter</cfunc>，该步骤是先按**导航生成边界**对上一步骤生成的体素做一次裁剪剔除。
+该步骤只有在开启 <cvar>bPerformVoxelFiltering</cvar> 且导航盒子不完全覆盖 Tile 时执行，用于把落在生成边界外的可走体素过滤置空，做一次裁剪剔除。实现上可概括为以下几步：
 
-执行时机位于三角形体素化之后、<cfunc>GenerateRecastFilter</cfunc> 之前，并且只会在开启 <cvar>bPerformVoxelFiltering</cvar> 且当前 Tile 没有被导航盒子完全覆盖时执行。
-
-**把落在生成边界外的可走体素过滤置空**是该步骤的目的。注意这里过滤的是当前已经被标记为 <cmcr>RC_WALKABLE_AREA</cmcr> 的 span。
-
-实现上可概括为以下几步：
-
-1. 先将每个 <cvar>InclusionBounds</cvar> 按 <cvar>WalkableRadius * CellSize</cvar> 向外扩一圈；
-
-2. 遍历高度场 <cvar>rcHeightfield</cvar> 中每个栅格 `(x, y)` 下挂接的 span 链表；
-  
-3. 对每个可走 span，恢复其在世界空间中的上下高度范围，并构造其体素包围盒；
-   
-4. 若该 span 包围盒的两个对角点都不在任一扩张后的边界盒内，则将其区域类型改写为 <cmcr>RC_NULL_AREA</cmcr>。
+  1. 先将每个导航盒子按 <cvar>WalkableRadius * CellSize</cvar> 向外扩一圈；
+  2. 遍历高度场 <cvar>rcHeightfield</cvar> 中每个栅格 `(x, y)` 中占据的体素 「span」 链表；
+  3. 对每个可走体素 「span」，还原映射回原世界空间中的占据高度，并构造包围盒；
+  4. 若体素 「span」 原世界空间包围盒的不在任一扩张边界盒内，则该体素应当剔除。
 
 可简化为如下伪代码：
 
@@ -183,13 +157,20 @@ for each cell(x, y) in HeightField:
             span.area = RC_NULL_AREA
 {% endhighlight %}
 
-其中边界盒额外扩张一圈是一个很关键的细节。源码注释里直接写明这样做是为了避免产生 **fake cliffs**：如果严格按原始边界裁切，靠边缘的一圈可走体素可能会过早被抹掉，后续在高度差过滤阶段就容易被误判为“悬崖”或边界断裂。
+其中边界盒额外扩张是一个关键细节。源码注释里直接写明这样做是为了避免产生 **fake cliffs**：如果严格按原始边界裁切，边缘体素由于精度误差可能被错误剔除，容易造成错误的“悬崖”或断裂边界。
 
-因此，<cfunc>ApplyVoxelFilter</cfunc> 的本质更接近 **“按 NavBounds 做 walkable span 的裁边”**，而不是通常理解上的障碍物过滤。它负责先把不该参与后续构网的边界外体素剔掉，后面的 <cfunc>rcFilterLowHangingWalkableObstacles</cfunc>、<cfunc>rcFilterLedgeSpans</cfunc> 等步骤才真正开始按“是否可通行”来筛选体素。
+其三维示意图如下所示：
 
-#### 体素筛选 - GenerateRecastFilter
+<div class="three-container-box">
+<div class="three-container" id="apply_voxel_filter_demo"></div>
+</div>
+<script type="module" src="{{ site.baseurl }}/assets/js/navigation/apply_voxel_filter_demo.js"></script>
 
-该步骤对体素化中一些不满足 AI 可走的块进行剔除标记，使用宏 <cmcr>RC_NULL_AREA</cmcr> 进行标记。
+因此，<cfunc>ApplyVoxelFilter</cfunc> 只负责先把不该参与后续构网的边界外体素剔掉，后面的 <cfunc>rcFilterLowHangingWalkableObstacles</cfunc>、<cfunc>rcFilterLedgeSpans</cfunc> 等步骤才真正开始按“是否可通行”来筛选体素。
+
+#### 体素筛选
+
+对应 <cfunc>GenerateRecastFilter</cfunc> 部分，该步骤对体素化中一些不满足 AI 可走的块进行剔除标记，使用宏 <cmcr>RC_NULL_AREA</cmcr> 进行标记。
 
 需要剔除的体素块一共有两种类型：
 
@@ -214,27 +195,14 @@ if(Δheight <= walkableClimb)
 
 <div class="three-container-box">
 <div class="three-container" id="low_hanging_obstacle_demo"></div>
-<div style="text-align: center; margin-top: 20px; font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif; font-size: 14px; line-height: 1.42857143; color: #333;">
-<label>
-  ΔHeight:
-  <input class="slider" id="lowHangingBottomSlider" type="range" min="0.6" max="1.6" step="0.1" value="1.0">
-  <span class="slider-value">1.0</span>
-</label>
-<label>
-  walkableClimb:
-  <input class="slider" id="lowHangingClimbSlider" type="range" min="0.2" max="1.2" step="0.1" value="0.8">
-  <span class="slider-value">0.8</span>
-</label>
-</div>
-<p id="lowHangingStatus" style="text-align:center; margin-top: 10px;"></p>
 </div>
 <script type="module" src="{{ site.baseurl }}/assets/js/navigation/low_hanging_obstacle.js"></script>
 
 **rcFilterLedgeSpans**
 
-该步骤筛除孤立在空中的 **ledge** 体素，所谓 **ledge** 即一个体素的所有邻居均低于可攀爬高度，那该体素孤立且没有可达的可能性，则理应被剔除。
+该步骤筛除孤立在空中的 **ledge** 体素，所谓 **ledge** 即一个体素的任一邻居低于可攀爬高度，那该体素即是悬崖，对于寻路而言，该体素本身的存在即是不安全的，理应被剔除。
 
-> **ledge**： ledge is a span with one or more neighbors whose maximum is further away than walkableClimb from the current span's maximum.
+> **ledge**： ledge is a span with *one or more* neighbors whose maximum is further away than walkableClimb from the current span's maximum.
 >
 > <div style="text-align:right;font-family:MV Boli;">-RecastFilter.cpp rcFilterLedgeSpans</div>
 
@@ -243,31 +211,52 @@ if(Δheight <= walkableClimb)
 ```cpp
 // RecastFilter.cpp
 // void rcFilterLedgeSpans(...)
-ΔneighborHeightMin = Min(neighborSpan.height - curSpan.height);
-if(ΔneighborHeightMin > walkableClimb)
+minh = +INF;
+for each neighbor in 4 directions
+   minh = Min(minh, neighborTop - curTop);
+
+if(minh < -walkableClimb)
 {
-    curSpan.area = ❌👟;
+   curSpan.area = ❌👟;
 }
 ```
 
 其示意图如下：
 
+<div class="three-container-box">
+<div class="three-container" id="ledge_drop_demo"></div>
+</div>
+<script type="module" src="{{ site.baseurl }}/assets/js/navigation/ledge_drop_demo.js"></script>
 
+这里与源码的第一段判断一致，实际比较的是当前 span 到四方向邻居可站立面的最小高度差 <cvar>minh</cvar>。只要存在某个方向的下降超过 <cvar>walkableClimb</cvar>，当前 span 就会被视为 ledge。
 
 除此外还有一个可选过滤项 <cvar>filterNeighborSlope</cvar> ，当前邻居块间高度差大于可攀爬高度时，可判断当前体素块是陡崖的一部分，也应当予以排除：
 
 ```cpp
 // RecastFilter.cpp
 // void rcFilterLedgeSpans(...)
-neighborHeightMax = Max(neighborSpan.height);
-neighborHeightMin = Min(neighborSpan.height);
-if(neighborHeightMax - neighborHeightMin > walkableClimb)
+accessibleNeighborMax = -INF;
+accessibleNeighborMin = +INF;
+for each accessible neighbor in 4 directions
+{
+    accessibleNeighborMax = Max(accessibleNeighborMax, accessibleNeighborTop);
+    accessibleNeighborMin = Min(accessibleNeighborMin, accessibleNeighborTop);
+}
+
+if(accessibleNeighborMax - accessibleNeighborMin > walkableClimb)
 {
     curSpan.area = ❌👟;
 }
 ```
 
 其示意图如下：
+
+<div class="three-container-box">
+<div class="three-container" id="ledge_slope_demo"></div>
+</div>
+<script type="module" src="{{ site.baseurl }}/assets/js/navigation/ledge_slope_demo.js"></script>
+
+这一段与源码中的 <cvar>asmax - asmin > walkableClimb</cvar> 对应，统计的是**可达邻居**的最高与最低可站立面，而不是简单把所有邻居高度直接拿来比较。
 
 
 
@@ -459,9 +448,7 @@ dst[i] = (sum(neigborsSrc) + 5) / 9;
     > 💡<cvar>regionId</cvar> 是最重要的输入参数，它是一个递增的整数，仅代表「 **region** 」的编号。
 
     1. 传入的体素块会先把 「 **region** 」定义为 <cvar>regionId</cvar> 并压入栈 <cvar>stack</cvar> 中;
-
     2. 每次取出栈 <cvar>stack</cvar> 中的一个元素 <cvar>span</cvar>，检查八向连通邻居，若 <cvar>area</cvar> 一致，但已有 「 **region** 」 归属，则不用填充本轮输入的 <cvar>regionId</cvar>，可回退归属为 **0**，不继续向外扩张，等待下一个步骤获取邻居的归属标记。
-
     3. 否则，该块保留 <cvar>regionId</cvar> 作为自己的 「 **region** 」，并将满足条件的连通四邻居标为相同的 <cvar>regionId</cvar>，构成一个新的归属集合，并压入栈继续迭代。
 
     <div id="flood_region_conflict_demo" style="margin: 12px 0 12px;"></div>

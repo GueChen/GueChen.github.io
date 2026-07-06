@@ -1,10 +1,76 @@
 import * as THREE from 'https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js';
 import { OrbitControls } from 'https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js';
+import { createDemoShell, applyResponsiveSplitLayout } from './demo_split_layout.js';
 
+const $container = $("#rasterize_voxel");
+
+if (!$container.length) {
+  throw new Error("Missing rasterize_voxel container.");
+}
+
+const shell = createDemoShell($container[0], {
+  layoutId: "rasterizeVoxelLayout",
+  viewportId: "rasterizeVoxelViewport",
+  panelId: "rasterizeVoxelPanel",
+  title: "三角面体素化",
+  headerRight: "参数面板",
+  viewportHeight: 340,
+  maxWidth: "760px",
+  viewportOverlayHtml: `
+    <div
+      style="
+        position:absolute;
+        left:12px;
+        top:12px;
+        padding:6px 10px;
+        border-radius:999px;
+        background:rgba(15,23,42,0.72);
+        color:#f8fafc;
+        font-size:12px;
+        line-height:1;
+        pointer-events:none;
+        box-shadow:0 4px 12px rgba(0,0,0,0.18);
+        z-index:2;
+        white-space:nowrap;
+      "
+    >可拖拽顶点</div>
+  `,
+  panelBodyHtml: `
+    <label style="display:block; margin-bottom:10px;">
+      <span style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px; font-size:12px; font-weight:350;">
+        <span>Tile Size</span>
+        <span id="tileSizeValue">7</span>
+      </span>
+      <input id="tileSizeSlider" type="range" min="4" max="10" step="1" value="7" style="display:block; width:100%; appearance:auto; -webkit-appearance:auto; accent-color:#60a5fa;">
+    </label>
+    <label style="display:block; margin-bottom:10px;">
+      <span style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px; font-size:12px; font-weight:350;">
+        <span>Cell Size</span>
+        <span id="cellSizeValue">0.6</span>
+      </span>
+      <input id="cellSizeSlider" type="range" min="0.1" max="1" step="0.1" value="0.6" style="display:block; width:100%; appearance:auto; -webkit-appearance:auto; accent-color:#60a5fa;">
+    </label>
+    <label style="display:block;">
+      <span style="display:flex; justify-content:space-between; gap:12px; margin-bottom:6px; font-size:12px; font-weight:350;">
+        <span>Cell Height</span>
+        <span id="cellHeightValue">0.5</span>
+      </span>
+      <input id="cellHeightSlider" type="range" min="0.05" max="1" step="0.05" value="0.5" style="display:block; width:100%; appearance:auto; -webkit-appearance:auto; accent-color:#60a5fa;">
+    </label>
+    <div style="margin:12px 0 10px; height:1px; background:rgba(226,232,240,0.28);"></div>
+    <div id="controls" style="color:#cbd5e1;"></div>
+  `,
+});
+
+const $viewport = $(shell.viewport);
+const $layout = $(shell.layout);
+const $panel = $(shell.panel);
 const $tileSlider = $("#tileSizeSlider");
 const $cellSlider = $("#cellSizeSlider");
 const $cellHeightSlider = $("#cellHeightSlider");
-const $container = $("#rasterize_voxel");
+const $tileValue = $("#tileSizeValue");
+const $cellValue = $("#cellSizeValue");
+const $cellHeightValue = $("#cellHeightValue");
 const $controls = $("#controls");
 
 let gridSize = parseFloat($tileSlider.val() || "7");
@@ -26,34 +92,14 @@ const defaultVertexPositions = [
 ];
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(75, $container.width() / $container.height(), 0.1, 1000);
-camera.position.set(0.4, 1.4, 4.3);
+const camera = new THREE.PerspectiveCamera(75, $viewport.width() / $viewport.height(), 0.1, 1000);
+camera.position.set(0.5, 1.9, 5.6);
 
 const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
 renderer.setPixelRatio(window.devicePixelRatio);
-renderer.setSize($container.width(), $container.height());
+renderer.setSize($viewport.width(), $viewport.height());
 renderer.setClearColor(0x000000, 0.08);
-$container.append(renderer.domElement);
-$container.css("position", "relative");
-$container.append(`
-  <div
-    style="
-      position:absolute;
-      left:12px;
-      top:12px;
-      padding:6px 10px;
-      border-radius:999px;
-      background:rgba(15,23,42,0.72);
-      color:#f8fafc;
-      font-size:12px;
-      line-height:1;
-      pointer-events:none;
-      box-shadow:0 4px 12px rgba(0,0,0,0.18);
-      z-index:2;
-      white-space:nowrap;
-    "
-  >可点击并拖拽顶点</div>
-`);
+$viewport.append(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.enableZoom = false;
@@ -327,7 +373,27 @@ function createTriangleFace() {
 }
 
 function renderLegend() {
-  $controls.empty();
+  $tileValue.text(gridSize.toFixed(0));
+  $cellValue.text(realCellSize.toFixed(2));
+  $cellHeightValue.text(cellHeight.toFixed(2));
+
+  if (!vertexEntries.length || activeVertexIndex < 0) {
+    $controls.html(`当前拖拽任一顶点，可查看其落入的体素列与高度层。`);
+    return;
+  }
+
+  const entry = vertexEntries.find((item) => item.index === activeVertexIndex);
+  if (!entry) {
+    $controls.html(`当前拖拽任一顶点，可查看其落入的体素列与高度层。`);
+    return;
+  }
+
+  $controls.html(`
+    <div><strong style="color:#f8fafc;">${entry.name}</strong></div>
+    <div>Grid = ${gridDivisions} × ${gridDivisions}，实际 Cell Size = ${realCellSize.toFixed(2)}</div>
+    <div>Cell Index = (${entry.xIndex}, ${entry.zIndex})，Height Layer = ${entry.yIndex}</div>
+    <div>Vertex = (${entry.position.x.toFixed(2)}, ${entry.position.y.toFixed(2)}, ${entry.position.z.toFixed(2)})</div>
+  `);
 }
 
 function setBoxOpacity(box, fillOpacity, edgeOpacity) {
@@ -402,8 +468,17 @@ function reconfigureGrid(tileSize, cellSizeValue) {
 }
 
 function onResize() {
-  const w = $container.width();
-  const h = $container.height();
+  applyResponsiveSplitLayout($container[0], $layout[0], $viewport[0], $panel[0], {
+    breakpoint: 700,
+    wideViewportFlex: "1 1 0%",
+    widePanelFlex: "1 1 0%",
+    widePanelWidth: "auto",
+    stackedViewportFlex: "1 1 300px",
+    stackedPanelFlex: "1 1 240px",
+  });
+
+  const w = $viewport.width();
+  const h = $viewport.height();
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
   renderer.setSize(w, h);
