@@ -146,9 +146,46 @@ UNavigationSystemV1::Build()
   1. 当三角形仅占据一个体素 「span」 时，不用切割，可直接记录其 y 方向上高度，填入高度场；
   2. 当三角形在 y 方向上跨度不超过超参数 `CellHeight` 时，切割时可不用记录 y 轴的值跨度。
 
-#### ~~ApplyVoxelFilter~~
+#### 体素剔除
 
-> 待补充，暂时没看，看注释是过滤掉 Tile 外的体素
+在 UE 中它对应 <cfunc>FRecastTileGenerator::ApplyVoxelFilter</cfunc>，该步骤是先按**导航生成边界**对上一步骤生成的体素做一次裁剪剔除。
+
+执行时机位于三角形体素化之后、<cfunc>GenerateRecastFilter</cfunc> 之前，并且只会在开启 <cvar>bPerformVoxelFiltering</cvar> 且当前 Tile 没有被导航盒子完全覆盖时执行。
+
+**把落在生成边界外的可走体素过滤置空**是该步骤的目的。注意这里过滤的是当前已经被标记为 <cmcr>RC_WALKABLE_AREA</cmcr> 的 span。
+
+实现上可概括为以下几步：
+
+1. 先将每个 <cvar>InclusionBounds</cvar> 按 <cvar>WalkableRadius * CellSize</cvar> 向外扩一圈；
+
+2. 遍历高度场 <cvar>rcHeightfield</cvar> 中每个栅格 `(x, y)` 下挂接的 span 链表；
+  
+3. 对每个可走 span，恢复其在世界空间中的上下高度范围，并构造其体素包围盒；
+   
+4. 若该 span 包围盒的两个对角点都不在任一扩张后的边界盒内，则将其区域类型改写为 <cmcr>RC_NULL_AREA</cmcr>。
+
+可简化为如下伪代码：
+
+{% highlight cpp %}
+for each InclusionBounds:
+    ExpandedBounds = InclusionBounds.ExpandBy(WalkableRadius * CellSize)
+
+for each cell(x, y) in HeightField:
+    for each span in cell:
+        if span.area != RC_WALKABLE_AREA:
+            continue
+
+        SpanMinV = voxel box min corner
+        SpanMaxV = voxel box max corner
+
+        if SpanMinV not in any ExpandedBounds
+        and SpanMaxV not in any ExpandedBounds:
+            span.area = RC_NULL_AREA
+{% endhighlight %}
+
+其中边界盒额外扩张一圈是一个很关键的细节。源码注释里直接写明这样做是为了避免产生 **fake cliffs**：如果严格按原始边界裁切，靠边缘的一圈可走体素可能会过早被抹掉，后续在高度差过滤阶段就容易被误判为“悬崖”或边界断裂。
+
+因此，<cfunc>ApplyVoxelFilter</cfunc> 的本质更接近 **“按 NavBounds 做 walkable span 的裁边”**，而不是通常理解上的障碍物过滤。它负责先把不该参与后续构网的边界外体素剔掉，后面的 <cfunc>rcFilterLowHangingWalkableObstacles</cfunc>、<cfunc>rcFilterLedgeSpans</cfunc> 等步骤才真正开始按“是否可通行”来筛选体素。
 
 #### 体素筛选 - GenerateRecastFilter
 
