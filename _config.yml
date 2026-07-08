@@ -31,6 +31,12 @@ display_header:
  - '这使你充满了决心.-♥'
  - 'you-are-filled-with-determination.-♥'
 author: GueChen
+home_music_player:
+  enabled: true
+  provider: qq
+  song_id: 603101831
+  cover_image: "https://y.qq.com/music/photo_new/T002R300x300M000004HKYLN1ysoMj.jpg"
+  title: "High Halls - Christopher Larkin"
 markdown: kramdown
 kramdown:
   toc_levels: 1..6

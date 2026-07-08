@@ -15,4 +15,21 @@ layout: default
   </div>
 </div>
 
+{% if page.music_player and site.home_music_player and site.home_music_player.enabled %}
+<div class="home-music-player" aria-label="{{ site.home_music_player.title }}">
+  <div class="home-music-player__viewport">
+    <iframe
+      class="home-music-player__frame"
+      frameborder="no"
+      border="0"
+      marginwidth="0"
+      marginheight="0"
+      scrolling="no"
+      src="https://i.y.qq.com/n2/m/outchain/player/index.html?songid={{ site.home_music_player.song_id }}"
+      title="{{ site.home_music_player.title }}"
+    ></iframe>
+  </div>
+</div>
+{% endif %}
+
 <script src="{{ site.baseurl }}/assets/js/typewriter.js"></script>

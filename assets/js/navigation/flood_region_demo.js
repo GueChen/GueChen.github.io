@@ -102,7 +102,7 @@
       .flood-demo-grid {
         display: grid;
         grid-template-columns: repeat(3, 42px);
-        gap: 5px;
+        gap: 4px;
         justify-content: center;
         padding: 8px;
         margin: 0;
@@ -115,29 +115,30 @@
         align-items: center;
         justify-content: center;
         box-sizing: border-box;
-        color: #f8fafc;
+        color: #111827;
         font: 700 12px/1 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-        transition: transform 0.22s ease, box-shadow 0.22s ease, background-color 0.22s ease;
+        box-shadow: inset 0 0 0 1px #cbd5e1;
+        transition: transform 0.18s ease, box-shadow 0.18s ease, background-color 0.18s ease;
       }
       .flood-demo-cell.is-focus {
-        transform: scale(1.05);
-        box-shadow: 0 0 0 3px rgba(219, 17, 10, 0.69);
+        transform: scale(1.04);
+        box-shadow: inset 0 0 0 1px #93c5fd, 0 0 0 2px rgba(59, 130, 246, 0.16);
       }
-      .flood-demo-cell.is-blocked { background: #4b5563; color: #cbd5e1; }
-      .flood-demo-cell.is-empty { background: #1d4f91; }
-      .flood-demo-cell.is-other { background: #2f9e44; }
-      .flood-demo-cell.is-seed { background: #d97706; }
-      .flood-demo-cell.is-new { background: #d9a106fa; }
-      .flood-demo-cell.is-low { background: #64748b; }
+      .flood-demo-cell.is-blocked { background: #9ca3af; }
+      .flood-demo-cell.is-empty { background: #dbeafe; }
+      .flood-demo-cell.is-other { background: #93c5fd; }
+      .flood-demo-cell.is-seed { background: #4ade80; }
+      .flood-demo-cell.is-new { background: #86efac; }
+      .flood-demo-cell.is-low { background: #e5e7eb; color: #475569; }
       .flood-demo-cell.is-rejected {
-        background: #7c3aed;
+        background: #fca5a5;
         position: relative;
       }
       .flood-demo-cell.is-rejected::before {
         content: "";
         position: absolute;
         inset: 7px;
-        border: 2px solid rgba(255,255,255,0.9);
+        border: 2px solid rgba(17, 24, 39, 0.58);
         border-radius: 8px;
         transform: rotate(45deg);
       }

@@ -534,9 +534,10 @@ dst[i] = (sum(neigborsSrc) + 5) / 9;
   
     给定一个体素块和一个探测方向，若该块与探测方向上的邻居块相连，但两者的区域不同，则该块为当前 「 **区域** 」 的边缘；
   
-    【缺图👨‍🏭】
+    <div id="is_solid_edge_demo" style="margin: 12px 0 4px;"></div>
+    <script src="{{ site.baseurl }}/assets/js/navigation/is_solid_edge_demo.js"></script>
   
-  + walkCountour
+  + walkContour
   
     给定一个体素块和一个初始探测方向，沿边缘遍历该「 **区域** 」，并记录所有的相邻「 **区域** 」，该过程遵循如下探索规则：
     
@@ -545,7 +546,8 @@ dst[i] = (sum(neigborsSrc) + 5) / 9;
     
     其整个过程示意图如下所示：
     
-    【缺图👨‍🏭】
+    <div id="walk_contour_demo" style="margin: 12px 0 4px;"></div>
+    <script src="{{ site.baseurl }}/assets/js/navigation/walk_contour_demo.js"></script>
     
     在遍历边缘过程中，使用一个 <ctype>rcIntArray</ctype> 结果将经过的所有区域收集统计，如此编获取了所有相邻的邻居 「 **区域** 」，整个过程伪码大致如下：
     

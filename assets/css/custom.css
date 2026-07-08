@@ -117,4 +117,58 @@ h1, h2, h3, h4, h5, h6 {
     font-size: 0%;
   }
 }
+
+.home-music-player {
+    position: fixed;
+    right: 20px;
+    bottom: 20px;
+    width: 72px;
+    height: 72px;
+    border-radius: 999px;
+    overflow: hidden;
+    background: #0f172a;
+    box-shadow: 0 12px 24px rgba(0, 0, 0, 0.24);
+    z-index: 30;
+}
+
+.home-music-player__viewport {
+    position: absolute;
+    left: 3px;
+    top: 3px;
+    width: 66px;
+    height: 66px;
+    border-radius: 999px;
+    overflow: hidden;
+}
+
+.home-music-player__frame {
+    position: absolute;
+    left: 0;
+    top: 0;
+    display: block;
+    width: 330px;
+    height: 66px;
+    border: 0;
+}
+
+@media screen and (max-width: 768px) {
+    .home-music-player {
+        right: 12px;
+        bottom: 12px;
+        width: 64px;
+        height: 64px;
+    }
+
+    .home-music-player__viewport {
+        left: 3px;
+        top: 3px;
+        width: 58px;
+        height: 58px;
+    }
+
+    .home-music-player__frame {
+        width: 330px;
+        height: 58px;
+    }
+}
 /* ~ jpasholk */

@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sticky Table of Contents</title>
+    <style>
+        /* Basic reset */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+        }
+
+        .layout {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 20px;
+        }
+
+        .content {
+            flex: 1;
+            padding-right: 20px;
+        }
+
+        /* Sidebar for TOC */
+        .toc-sidebar-container {
+            flex: 0 0 25%;
+            max-width: 25%;
+        }
+
+        .toc-sidebar {
+            position: sticky;
+            top: 20px; /* Stick to top when scrolled */
+            background-color: #f9f9f9;
+            padding: 10px;
+            border: 1px solid #ddd;
+            z-index: 100;
+            height: max-content;
+        }
+
+        /* TOC List Styling */
+        #toc {
+            list-style-type: none;
+            padding: 0;
+        }
+
+        .toc-list-item {
+            margin: 10px 0;
+        }
+
+        .toc-link {
+            text-decoration: none;
+            color: #333;
+        }
+
+        .toc-link:hover {
+            text-decoration: underline;
+        }
+
+        .is-active-link {
+            color: blue;
+        }
+
+        /* Collapsible TOC */
+        .is-collapsible {
+            margin-left: 20px;
+        }
+
+        .is-collapsed {
+            display: none;
+        }
+
+        /* Active TOC item */
+        .is-active-li > .toc-link {
+            color: blue;
+        }
+
+    </style>
+</head>
+<body>
+
+    <div class="layout">
+        <div class="content">
+            <h1 id="定义">定义</h1>
+            <p>Content about definition.</p>
+
+            <h2 id="文件目录">文件目录</h2>
+            <p>Content about file structure.</p>
+
+            <h2 id="细节实现">细节实现</h2>
+            <p>Content explaining details.</p>
+
+            <h3 id="convertskletalmeshtostaticmesh">ConvertSkletalMeshToStaticMesh</h3>
+            <p>Details about this function.</p>
+
+            <h3 id="animationtotexture">AnimationToTexture</h3>
+            <p>Details about this function.</p>
+        </div>
+
+        <!-- TOC Sidebar -->
+        <div class="toc-sidebar-container" id="toc-container">
+            <aside class="toc-sidebar" id="toc-side">
+                <h2>目录</h2>
+                <nav id="toc">
+                    <ol class="toc-list">
+                        <li class="toc-list-item is-active-li">
+                            <a href="#定义" class="toc-link node-name--H1 is-active-link">定义</a>
+                        </li>
+                        <li class="toc-list-item">
+                            <a href="#文件目录" class="toc-link node-name--H1">文件目录</a>
+                        </li>
+                        <li class="toc-list-item">
+                            <a href="#细节实现" class="toc-link node-name--H1">细节实现</a>
+                            <ol class="toc-list is-collapsible is-collapsed">
+                                <li class="toc-list-item">
+                                    <a href="#convertskletalmeshtostaticmesh" class="toc-link node-name--H2">ConvertSkletalMeshToStaticMesh</a>
+                                </li>
+                                <li class="toc-list-item">
+                                    <a href="#animationtotexture" class="toc-link node-name--H2">AnimationToTexture</a>
+                                </li>
+                            </ol>
+                        </li>
+                    </ol>
+                </nav>
+            </aside>
+        </div>
+    </div>
+
+    <!-- jQuery -->
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+
+    <script>
+        // Collapsing and Expanding nested TOC lists
+        $(document).ready(function() {
+            // Toggle nested TOC on click
+            $(".toc-list-item > a").click(function(e) {
+                var $nestedList = $(this).next("ol");
+                if ($nestedList.length > 0) {
+                    e.preventDefault(); // Prevent normal anchor behavior
+                    $nestedList.toggleClass("is-collapsed");
+                }
+            });
+
+            // Sticky behavior for TOC sidebar
+            var $tocSidebar = $('#toc-side');
+            var tocOffsetTop = $tocSidebar.offset().top;
+
+            $(window).on('scroll', function() {
+                var scrollTop = $(window).scrollTop();
+
+                if (scrollTop > tocOffsetTop) {
+                    $tocSidebar.addClass('sticky');
+                } else {
+                    $tocSidebar.removeClass('sticky');
+                }
+
+                // Highlight active link
+                $('#toc a').each(function() {
+                    var sectionOffset = $($(this).attr('href')).offset().top;
+                    if (scrollTop >= sectionOffset - 20 && scrollTop < sectionOffset + $(this).height()) {
+                        $(this).addClass('is-active-link').parent().addClass('is-active-li');
+                    } else {
+                        $(this).removeClass('is-active-link').parent().removeClass('is-active-li');
+                    }
+                });
+            });
+
+            // Update position of TOC on resize
+            var resizeTimer;
+            $(window).on('resize', function() {
+                clearTimeout(resizeTimer);
+                resizeTimer = setTimeout(function() {
+                    tocOffsetTop = $tocSidebar.offset().top; // Recalculate on resize
+                }, 100);
+            });
+        });
+    </script>
+
+</body>
+</html>
