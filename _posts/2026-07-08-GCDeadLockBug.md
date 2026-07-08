@@ -44,7 +44,15 @@ FAsyncLoadingThread::Run(...)
                 // 这里会消费掉 QueuedPackagedCounter
 ```
 
-但是比较特殊的情况是在 <cfunc>CreateAsyncPackagesFromQueue</cfunc> 前有一个多线程的 GC 互斥锁 `FGCScopeGuard GCGuard`。需要拿到互斥锁才能执行异步加载线程消费加载队列的逻辑。
+但是比较特殊的情况是在 <cfunc>CreateAsyncPackagesFromQueue</cfunc> 前有一个多线程的 GC 互斥锁 `FGCScopeGuard GCGuard`。需要拿到互斥锁才能执行异步加载线程消费加载队列的逻辑：
+```cpp
+// AsyncLoading.cpp
+// TickAsyncThread(...)
+// 尝试获取 GC 锁
+FGCScopeGuard GCGuard; 
+CreateAsyncPackagesFromQueue(bUseTimeLimit, bUseFullTimeLimit, TimeLimit); 
+
+```
 
 而回头看向  <cfunc>CollectGarbageInternal</cfunc> 部分，调用 GC 时有这样的逻辑：
 ```cpp
