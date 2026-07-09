@@ -752,8 +752,8 @@ if(bGenDataLayer) NavigationData = MoveTemp(GenerationContext.NavigationData);
 + dtBuildTileCacheContours - xxx
 + dtBuildTileCachePolyMesh - xxx
 + dtBuildTileCachePolyMeshDetail - xxx
-+ GatherOffMeshLinkData - xxx
-+ dtCreateNavMeshData - xxx
++ Construct OffMeshData - 将导航链接转换为 Detour 的离网连接参数
++ dtCreateNavMeshData - 将 PolyMesh / DetailMesh / OffMeshLinks 打包为 Detour tile 数据
 
 #### MarkDynamicAreas
 
@@ -1613,7 +1613,251 @@ for(int i = 0; i < lmesh.npolys; ++i)
 
 #### Construct OffMeshData
 
+到这里 `PolyMesh` 与 `DetailMesh` 已经准备好了，接下来还要把不依附于体素面片的「跳跃 / 跨越 / 门洞」类连接补进 tile。UE 在这里构造的是一个临时的 `FOffMeshData`，它本质上是 `dtOffMeshLinkCreateParams` 的收集器，后面会直接挂到 `dtNavMeshCreateParams::offMeshCons` 上。
+
+```cpp
+FOffMeshData OffMeshData;
+if (OffmeshLinks.Num() > 0)
+{
+    OffMeshData.Reserve(OffmeshLinks.Num());
+    OffMeshData.AreaClassToIdMap = &AdditionalCachedData.AreaClassToIdMap;
+    OffMeshData.FlagsPerArea = AdditionalCachedData.FlagsPerOffMeshLinkArea;
+
+    for (const FSimpleLinkNavModifier& LinkModifier : OffmeshLinks)
+    {
+        OffMeshData.AddLinks(LinkModifier.Links, LinkModifier.LocalToWorld,
+            TileConfig.AgentIndex, DefaultSnapHeight);
+#if WITH_NAVMESH_SEGMENT_LINKS
+        OffMeshData.AddSegmentLinks(LinkModifier.SegmentLinks, LinkModifier.LocalToWorld,
+            TileConfig.AgentIndex, DefaultSnapHeight);
+#endif
+    }
+}
+```
+
+这一步的输入不是前面体素化得到的多边形，而是更高层的 `FSimpleLinkNavModifier`。也就是说，**Off-mesh link 不参与栅格化 / 分区 / 轮廓提取**；它们会在 tile 即将封包成 Detour 数据之前，以附加连接的形式单独写入。
+
+`FOffMeshData::AddLinks` 处理的是点到点连接，核心工作有四个：
+
+1. 按 `SupportedAgents` 过滤，只保留当前 Agent 可用的链接；
+2. 用 `LocalToWorld` 把 UE 世界中的起终点变换到世界坐标，再转成 Recast 坐标写入 `vertsA0/vertsB0`；
+3. 根据方向、是否双向、是否吸附 cheapest area 等信息拼出 `type`，同时写入 `snapRadius`、`snapHeight` 与 `userID`；
+4. 通过 `AreaClassToIdMap` / `FlagsPerArea` 把 UE 的 `AreaClass` 映射成 Detour 里的 `area` 与 `polyFlag`。
+
+对应实现大致如下：
+
+```cpp
+StoreUnrealPoint(NewInfo.vertsA0, LocalToWorld.TransformPosition(Link.Left));
+StoreUnrealPoint(NewInfo.vertsB0, LocalToWorld.TransformPosition(Link.Right));
+
+NewInfo.type = DT_OFFMESH_CON_POINT |
+    (Link.Direction == ENavLinkDirection::BothWays ? DT_OFFMESH_CON_BIDIR : 0) |
+    (Link.bSnapToCheapestArea ? DT_OFFMESH_CON_CHEAPAREA : 0);
+
+NewInfo.snapRadius = Link.SnapRadius;
+NewInfo.snapHeight = Link.bUseSnapHeight ? Link.SnapHeight : DefaultSnapHeight;
+NewInfo.userID = Link.NavLinkId.GetId();
+```
+
+若开启 `WITH_NAVMESH_SEGMENT_LINKS`，`AddSegmentLinks` 还会把线段到线段的连接写成 `DT_OFFMESH_CON_SEGMENT`。它与普通点链接的差别主要在于要写入两条线段的四个端点 `vertsA0/A1/B0/B1`；其余的 `area`、`flag`、`direction`、`snap` 参数处理方式基本一致。
+
+这里的 `DefaultSnapHeight = walkableClimb * ch` 也值得注意：若链接没有显式给出 `SnapHeight`，UE 就使用当前 tile 允许的可攀爬高度作为默认吸附高度。可以把它理解成「端点向附近导航面贴合时允许的垂直容差」，避免链接端点与最终多边形表面存在轻微高度差时无法正确挂接。
+
+最终，这些收集好的 `LinkParams` 不会立刻改写 `PolyMesh`，而是在下一步作为 `dtNavMeshCreateParams` 的补充输入：
+
+```cpp
+Params.offMeshCons = OffMeshData.LinkParams.GetData();
+Params.offMeshConCount = OffMeshData.LinkParams.Num();
+```
+
+因此 `Construct OffMeshData` 的角色可以概括为：**把 UE 层面的 `NavLink` / `SegmentLink`，翻译成 Detour 能序列化进 tile 的 off-mesh connection 数组。** 它与前面的体素管线并行存在，共同组成一个完整的导航 tile。
+
 #### dtCreateNavMeshData
+
+`Construct OffMeshData` 结束后，当前 layer 上构建 tile 所需的信息已经齐了：基础多边形在 `PolyMesh`，细节高度三角形在 `DetailMesh`，附加跳转连接在 `OffMeshData`。接下来这一步不再是“继续生成新几何”，而是把这些结果**封装成 Detour 可直接加载的 tile 二进制数据**。
+
+UE 侧先做的事情，就是把前面各阶段产出的数据整理进一个 `dtNavMeshCreateParams`：
+
+```cpp
+dtNavMeshCreateParams Params;
+memset(&Params, 0, sizeof(Params));
+
+Params.verts = GenerationContext.PolyMesh->verts;
+Params.vertCount = GenerationContext.PolyMesh->nverts;
+Params.polys = GenerationContext.PolyMesh->polys;
+Params.polyAreas = GenerationContext.PolyMesh->areas;
+Params.polyFlags = GenerationContext.PolyMesh->flags;
+Params.polyCount = GenerationContext.PolyMesh->npolys;
+Params.nvp = GenerationContext.PolyMesh->nvp;
+
+Params.detailMeshes = GenerationContext.DetailMesh->meshes;
+Params.detailVerts = GenerationContext.DetailMesh->verts;
+Params.detailVertsCount = GenerationContext.DetailMesh->nverts;
+Params.detailTris = GenerationContext.DetailMesh->tris;
+Params.detailTriCount = GenerationContext.DetailMesh->ntris;
+
+Params.offMeshCons = OffMeshData.LinkParams.GetData();
+Params.offMeshConCount = OffMeshData.LinkParams.Num();
+
+Params.tileX = TileX;
+Params.tileY = TileY;
+Params.tileLayer = LayerIdx;
+Params.bmin = Layer->header->bmin;
+Params.bmax = Layer->header->bmax;
+Params.cs = TileConfig.cs;
+Params.ch = TileConfig.ch;
+Params.buildBvTree = TileConfig.bGenerateBVTree;
+```
+
+从字段分组就能看出来，这里输入的其实是三大块：
+
+1. **导航主网格**：`verts / polys / polyAreas / polyFlags`，决定寻路图的主体；
+2. **细节高度数据**：`detailMeshes / detailVerts / detailTris`，用于更精确的高度查询；
+3. **附加连接与 tile 元信息**：`offMeshCons`、tile 坐标、包围盒、体素尺寸等。
+
+因此 `dtCreateNavMeshData` 的职责，本质上就是把这些松散的中间结果重新排布，生成一份结构稳定、可序列化、可直接交给 `dtNavMesh::addTile()` 的内存块。
+
+Detour 内部的处理流程大致可以概括为以下几步：
+
+1. **校验输入合法性**
+
+   先检查 `nvp` 是否超过 `DT_VERTS_PER_POLYGON`，`vertCount` / `polyCount` 是否有效；这些条件不满足时直接返回失败。
+
+   ```cpp
+   if (params->nvp > DT_VERTS_PER_POLYGON) return false;
+   if (params->vertCount >= 0xffff) return false;
+   if (!params->vertCount || !params->verts) return false;
+   if (!params->polyCount || !params->polys) return false;
+   ```
+
+2. **分类 Off-Mesh Connection**
+
+   `dtCreateNavMeshData` 不会把所有传入的 off-mesh link 都原样塞进当前 tile，而是先判断它们是否“属于这块 tile”。Detour 会先根据当前 tile 的顶点和 detail 顶点求一个紧致的高度范围，并把 `walkableClimb` 作为上下余量：
+
+   ```cpp
+   hmin -= params->walkableClimb;
+   hmax += params->walkableClimb;
+   ```
+
+   随后用这个扩展包围盒去分类每条 link 的端点。对于普通点链接，只保留 **起点在当前 tile 内** 的连接；终点若也在当前 tile 内，则记为内部连接，否则标记为从某个边界侧离开当前 tile。  
+   这一步非常关键，因为 Detour 的 tile 数据要求每条 off-mesh connection 只在一个 tile 中“归档”，否则多 tile 拼接时会重复。
+
+3. **把 Off-Mesh Link 视作额外多边形**
+
+   这是理解 Detour tile 数据布局时最重要的一点：**off-mesh connection 在 Detour 中不是单独悬空的数据结构，而是额外追加的 polygon / vertex。**
+
+   ```cpp
+   const int totPolyCount = params->polyCount + storedOffMeshConCount;
+   const int totVertCount = params->vertCount + storedOffMeshConCount * 2;
+   ```
+
+   对点到点连接而言，每条 link 会追加：
+
+   + 2 个顶点：起点和终点；
+   + 1 个多边形：类型为 `DT_POLYTYPE_OFFMESH_POINT`。
+
+   UE 额外支持 segment link 时，还会继续追加更多分段连接多边形与顶点。
+
+4. **统计并分配最终内存块**
+
+   接下来 Detour 会预估 tile 内所有数据段的大小，包括：
+
+   + `dtMeshHeader`
+   + 顶点数组 `navVerts`
+   + 多边形数组 `navPolys`
+   + link 池 `dtLink`
+   + detail mesh / verts / tris
+   + BVTree
+   + off-mesh connection
+   + UE 扩展的 segment link / cluster 数据
+
+   然后一次性分配一整块连续内存：
+
+   ```cpp
+   const int dataSize = headerSize + vertsSize + polysSize + linksSize +
+                        detailMeshesSize + detailVertsSize + detailTrisSize +
+                        bvTreeSize + offMeshConsSize;
+
+   unsigned char* data = (unsigned char*)dtAlloc(
+       sizeof(unsigned char) * dataSize,
+       DT_ALLOC_PERM_TILE_DATA);
+   ```
+
+   也就是说，`dtCreateNavMeshData` 的产物并不是某个 C++ 对象树，而是一块**按既定顺序紧凑排布的二进制内存**。后续 `dtNavMesh` 在加载 tile 时，会按同样顺序把这块内存重新解释为 header、顶点、poly、detail 等结构。
+
+5. **写入 Header 与主体网格**
+
+   `dtMeshHeader` 会记录 tile 坐标、边界、poly 数、vert 数、detail 数、off-mesh 数等元信息。UE 这里还加入了 `resolution`、segment link、cluster 等扩展字段。
+
+   随后 Detour 开始真正拷贝数据。首先是把 `rcPolyMesh` 中基于体素坐标的顶点恢复到世界空间：
+
+   ```cpp
+   v[0] = params->bmin[0] + iv[0] * params->cs;
+   v[1] = params->bmin[1] + iv[1] * params->ch;
+   v[2] = params->bmin[2] + iv[2] * params->cs;
+   ```
+
+   这一步等于把之前离散体素网格中的 `(x, y, z)` 索引重新投回世界坐标，得到最终导航顶点。
+
+   然后写入 `navPolys`。普通多边形统一记为 `DT_POLYTYPE_GROUND`，邻接信息来自 `rcPolyMesh->polys` 的后半段；如果边标记的是 portal，则转换成 `DT_EXT_LINK | dir`，用于后续 tile 间连接。
+
+6. **写入 Detail Mesh**
+
+   如果上一步流程已经生成了 `detailMeshes`，这里就直接把 detail 顶点和三角形拷贝进 tile，并跳过那些与基础 polygon 顶点重复的 detail 顶点，只存“额外细化出来”的那部分。
+
+   若没有提供 detail mesh，Detour 会退化为对每个凸多边形做一次简单扇形三角化：
+
+   ```cpp
+   for (int j = 2; j < nv; ++j)
+   {
+       t[0] = 0;
+       t[1] = j - 1;
+       t[2] = j;
+   }
+   ```
+
+   这样即使没有精细高度数据，tile 依然能维持一个最基本的 detail 表达。
+
+7. **构建 BVTree 与 Off-Mesh Connection 表**
+
+   若 `buildBvTree` 为真，Detour 会基于 polygon 与 detail 数据构建包围体树，用于 tile 内更快的空间查询。
+
+   最后再把前面分类后的 off-mesh 连接写入 `dtOffMeshConnection` 数组：
+
+   ```cpp
+   con->poly = offMeshPolyBase + n;
+   dtVcopy(&con->pos[0], &offMeshCon.vertsA0[0]);
+   dtVcopy(&con->pos[3], &offMeshCon.vertsB0[0]);
+   con->rad = offMeshCon.snapRadius;
+   con->height = offMeshCon.snapHeight;
+   con->setFlags(offMeshCon.type);
+   con->side = offMeshConClass[i*2+1] == 0xff
+       ? DT_CONNECTION_INTERNAL
+       : offMeshConClass[i*2+1];
+   ```
+
+   这里能看出两个重要事实：
+
+   1. off-mesh link 既有对应的 polygon，也有单独的 `dtOffMeshConnection` 描述块；
+   2. `side` 记录了终点落在当前 tile 内部还是某个边界方向，供后续跨 tile 挂接使用。
+
+8. **返回 tile 二进制数据**
+
+   全部写完后，`dtCreateNavMeshData` 会返回：
+
+   + `outData`：tile 数据首地址
+   + `outDataSize`：整块数据的字节数
+
+   UE 则把它进一步包成：
+
+   ```cpp
+   GenerationContext.NavigationData.Add(
+       FNavMeshTileData(NavData, NavDataSize, LayerIdx, CompressedData.LayerBBox));
+   ```
+
+   到这一步，当前 layer 就从“构建过程中的中间结构”变成了“一块可被 Detour NavMesh 直接消费的 tile 数据”。
+
+整体来看，`dtCreateNavMeshData` 更像是 **NavMesh tile 的序列化 / 编译阶段**：前面的步骤负责“提取可走表面”，而这一步负责把 `PolyMesh`、`DetailMesh`、`OffMeshConnection`、BVTree 以及各种元信息统一打包成运行时可查询的数据布局。也正因为如此，它虽然名字叫 *CreateNavMeshData*，但真正做的不是再生成一遍导航，而是把前面已经生成好的结果整理成最终产物。
 
 # 参考
 
