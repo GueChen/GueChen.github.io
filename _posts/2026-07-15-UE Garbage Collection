@@ -1,0 +1,660 @@
+---
+layout: post
+title:  "UE Garbage Collection"
+date:   2026-07-15 20:30:00 +0800
+categories: jekyll update
+---
+
+# 引言
+
+垃圾回收是一种自动化的内存管理机制，其目的是复用提前申请但未被使用的内存，也就是 Garbage；而 GC 也是 UE 中最重要的内存管理机制之一，其中 UObject 的 申请回收复用都是在 GC 的管理下进行。我们就来简要阅读分析一下 UE 中的 GC 机制。
+
+# 从入口看一次 GC
+
+先看最外层入口，<cfunc>CollectGarbage</cfunc> 的实现位于 Engine/Source/Runtime/CoreUObject/Private/UObject/GarbageCollection.cpp：
+
+```cpp
+void CollectGarbage(EObjectFlags KeepFlags, bool bPerformFullPurge)
+{
+	AcquireGCLock();
+	UE::GC::CollectGarbageInternal(KeepFlags, bPerformFullPurge);
+	// GC lock was released after reachability analysis inside CollectGarbageInternal
+}
+```
+
+最外层逻辑其实很直白：
+
+1. 先拿 <cvar>GCLock</cvar>，避免其他线程同时做 UObject 相关操作。
+2. 进入 <cfunc>CollectGarbageInternal</cfunc>。
+3. 真正的锁释放并不在这个函数末尾，而是在 GC 内部流程走到合适阶段后释放。
+
+而 <cfunc>CollectGarbageInternal</cfunc> 本身又非常薄，只是把工作转发给 <cvar>GReachabilityState</cvar>：
+
+```cpp
+FORCEINLINE void CollectGarbageInternal(EObjectFlags KeepFlags, bool bPerformFullPurge)
+{
+	GReachabilityState.CollectGarbage(KeepFlags, bPerformFullPurge);
+}
+```
+
+所以从源码结构上看，UE5.4 的 GC 可以粗略分成 3 段：
+
+1. <cfunc>PreCollectGarbageImpl</cfunc>：GC 前准备。
+2. <cfunc>PerformReachabilityAnalysis</cfunc>：可达性分析，也就是 Mark。
+3. <cfunc>PostCollectGarbageImpl</cfunc> + <cfunc>UnhashUnreachableObjects</cfunc> + <cfunc>IncrementalDestroyGarbage</cfunc>：把不可达对象逐步销毁并释放。
+
+# GC 前会做什么
+
+<cfunc>FReachabilityAnalysisState::PerformReachabilityAnalysisAndConditionallyPurgeGarbage</cfunc> 会先调用 <cfunc>PreCollectGarbageImpl</cfunc>。这里面比较关键的几件事是：
+
+```cpp
+if (!GIsIncrementalReachabilityPending && GFlushStreamingOnGC && IsAsyncLoading())
+{
+	ReleaseGCLock();
+	FlushAsyncLoading();
+	AcquireGCLock();
+}
+
+FCoreUObjectDelegates::GetPreGarbageCollectDelegate().Broadcast();
+
+GIsGarbageCollectingAndLockingUObjectHashTables = true;
+LockUObjectHashTables();
+```
+
+这里能看出几个设计点：
+
+1. **GC 前可能先 Flush 异步加载**。这是因为加载过程本身也会构造 UObject，如果边加载边回收，状态很容易打架。
+2. **PreGarbageCollect Delegate 会先广播**，所以很多引擎模块或业务系统都能在 GC 前做收尾。
+3. **UObject 哈希表只在可达性分析阶段加锁**，而不是整个销毁阶段一直锁住。
+
+这也是为什么 UE 的 GC 不只是一个“遍历并 delete”的简单过程，它前后插了不少同步和状态收敛逻辑。
+
+# 什么样的对象会被保活
+
+GC 的核心问题其实不是“怎么删”，而是“谁还能活着”。UE 的答案是：**从一组根对象出发，把所有可达对象都标出来，剩下的就是垃圾**。
+
+从源码看，常见的保活路径主要有下面几种。
+
+## 1. RootSet
+
+最直接的一种方式是把对象放进 RootSet。<cvar>UObjectBaseUtility</cvar> 里接口非常明确：
+
+```cpp
+FORCEINLINE void AddToRoot()
+{
+	GUObjectArray.IndexToObject(InternalIndex)->SetRootSet();
+}
+
+FORCEINLINE void RemoveFromRoot()
+{
+	GUObjectArray.IndexToObject(InternalIndex)->ClearRootSet();
+}
+```
+
+另外在 ObjectMacros.h 里还能看到 <cvar>RF_MarkAsRootSet</cvar>：
+
+```cpp
+RF_MarkAsRootSet = 0x00000080,
+```
+
+也就是说，一个对象只要显式进了 RootSet，就算没有普通引用链指向它，也不会在这轮 GC 中被回收。
+
+## 2. 反射系统能看到的引用
+
+对于绝大部分业务代码，最常见的保活方式还是 <cvar>UPROPERTY</cvar> / <cvar>TObjectPtr</cvar>。GC 在扫描对象时会同时走“属性引用”和“类自定义引用”两条路。
+
+在 GarbageCollection.cpp 里，<cfunc>FReferenceFinder::FindReferences</cfunc> 的关键逻辑如下：
+
+```cpp
+if (!Object->GetClass()->IsChildOf(UClass::StaticClass()))
+{
+	AddPropertyReferences(Object->GetClass(), Object, InReferencingObject);
+}
+Object->CallAddReferencedObjects(*this);
+```
+
+也就是说，UE 会先通过反射系统扫描对象的属性，再调用类自己的 <cfunc>AddReferencedObjects</cfunc>。
+
+其中 <cfunc>CallAddReferencedObjects</cfunc> 最终走的是类元数据里登记的函数指针：
+
+```cpp
+FORCEINLINE void CallAddReferencedObjects(UObject* This, FReferenceCollector& Collector) const
+{
+	check(CppClassStaticFunctions.GetAddReferencedObjects() != nullptr);
+	CppClassStaticFunctions.GetAddReferencedObjects()(This, Collector);
+}
+```
+
+这也解释了为什么平时会反复强调：
+
+1. UObject 成员引用最好走 <cvar>UPROPERTY</cvar> / <cvar>TObjectPtr</cvar>。
+2. 如果某个引用无法被反射系统自动看见，就要自己在 <cfunc>AddReferencedObjects</cfunc> 里补出来。
+
+## 3. 非 UObject 宿主通过 <cvar>FGCObject</cvar> 挂住引用
+
+如果一个对象本身不是 UObject，但它内部又持有 UObject 指针，那就不能指望普通反射系统自动扫描了。这时 UE 提供了 <cvar>FGCObject</cvar>：
+
+```cpp
+class FGCObject
+{
+public:
+	virtual void AddReferencedObjects(FReferenceCollector& Collector) = 0;
+	virtual FString GetReferencerName() const = 0;
+};
+```
+
+它背后的实现也很直白，<cvar>UGCObjectReferencer</cvar> 会把所有注册过的 <cvar>FGCObject</cvar> 汇总起来，然后在 GC 时统一转发 <cfunc>AddReferencedObjects</cfunc>。
+
+因此像编辑器工具类、管理器、非 UObject 容器这类对象，只要继承 <cvar>FGCObject</cvar> 并正确上报引用，同样可以参与 GC 引用链。
+
+## 4. Cluster
+
+UE 还引入了 Cluster 来降低 Mark 阶段的遍历成本。<cfunc>CreateCluster</cfunc> 的实现里能看到这种意图：
+
+```cpp
+void UObjectBaseUtility::CreateCluster()
+{
+	const int32 ClusterIndex = GUObjectClusters.AllocateCluster(InternalIndex);
+	FClusterReferenceProcessor Processor(InternalIndex, Cluster, GetOutermost());
+	CollectReferences(Processor, ArrayStruct);
+}
+```
+
+本质上可以把 Cluster 理解为：**把一批强关联对象预先收敛成一个组**。这样 GC 扫描到 ClusterRoot 时，不需要再把组内对象当成完全独立的散点来处理。
+
+# Mark 阶段：可达性分析怎么做
+
+GC 的真正主体在 <cfunc>FReachabilityAnalysisState::PerformReachabilityAnalysisAndConditionallyPurgeGarbage</cfunc>。它会根据配置选择全量或增量分析：
+
+```cpp
+const bool bReachabilityUsingTimeLimit = !bFullPurge && GAllowIncrementalReachability;
+PerformReachabilityAnalysisAndConditionallyPurgeGarbage(bReachabilityUsingTimeLimit);
+```
+
+继续往下，<cfunc>PerformReachabilityAnalysis</cfunc> 会决定走 <cfunc>CollectGarbageFull</cfunc> 还是 <cfunc>CollectGarbageIncremental</cfunc>：
+
+```cpp
+if (bPerformFullPurge)
+{
+	UE::GC::CollectGarbageFull(ObjectKeepFlags);
+}
+else
+{
+	UE::GC::CollectGarbageIncremental(ObjectKeepFlags);
+}
+```
+
+这里要注意一点，UE5.4 的 GC 已经不是“每次都必须一口气扫完”的模型了，而是支持 **Incremental Reachability**：
+
+1. 本轮先做一段可达性分析。
+2. 如果时间片耗尽，就挂起状态。
+3. 下一帧再继续从中断点恢复。
+
+对应状态就保存在 <cvar>FReachabilityAnalysisState</cvar> 里，例如：
+
+```cpp
+bool bIsSuspended = false;
+double IterationStartTime = 0.0;
+double IterationTimeLimit = 0.0;
+```
+
+这样做的直接目的就是减少单帧 GC 卡顿。
+
+# Post 阶段：不可达对象先整理，再销毁
+
+当可达性分析完成后，<cfunc>PostCollectGarbageImpl</cfunc> 会做一轮后处理：
+
+```cpp
+Swap(GUnreachableObjectFlag, GMaybeUnreachableObjectFlag);
+DissolveUnreachableClusters(GatherOptions);
+ClearWeakReferences(...);
+GatherUnreachableObjects(GatherOptions, 0.0);
+
+UnlockUObjectHashTables();
+ReleaseGCLock();
+```
+
+这里有几个值得关注的点：
+
+1. **Weak 引用会在这个阶段被清理**，所以很多 <cvar>TWeakObjectPtr</cvar> 会在 GC 后变空。
+2. **真正的 UObject 哈希锁和 GC 锁在这里陆续释放**，后续的销毁逻辑不再要求整个对象系统一直处于“硬锁死”状态。
+3. **不可达对象会被收集到专门数组里**，后续进入 <cfunc>BeginDestroy</cfunc>/<cfunc>FinishDestroy</cfunc> 流程。
+
+这一步做完以后，GC 已经知道“谁该死”，接下来只是“怎么死得安全”。
+
+# BeginDestroy：先进入不可访问状态
+
+<cfunc>UnhashUnreachableObjects</cfunc> 会遍历所有不可达对象，并调用 <cfunc>ConditionalBeginDestroy</cfunc>：
+
+```cpp
+while (GUnrechableObjectIndex < GUnreachableObjects.Num())
+{
+	UObject* Object = static_cast<UObject*>(ObjectItem->Object);
+	Object->ConditionalBeginDestroy();
+}
+```
+
+而 <cfunc>ConditionalBeginDestroy</cfunc> 的核心逻辑也很直接：
+
+```cpp
+if (!HasAnyFlags(RF_BeginDestroyed))
+{
+	SetFlags(RF_BeginDestroyed);
+	BeginDestroy();
+}
+```
+
+也就是说，这个阶段做的不是立刻释放内存，而是：
+
+1. 给对象打上 <cvar>RF_BeginDestroyed</cvar>。
+2. 进入对象自定义的 <cfunc>BeginDestroy</cfunc>。
+3. 启动异步清理、渲染资源释放、外部句柄断开等“前置销毁工作”。
+
+很多资源型 UObject 都会在这里启动异步释放，而不是立刻删除。
+
+# FinishDestroy：等资源准备好后再做最终销毁
+
+后续 <cfunc>IncrementalDestroyGarbage</cfunc> 会继续处理这些不可达对象。关键判断在这里：
+
+```cpp
+if (Object->IsReadyForFinishDestroy())
+{
+	Object->ConditionalFinishDestroy();
+}
+else
+{
+	GGCObjectsPendingDestruction.Add(Object);
+}
+```
+
+如果对象还没准备好，比如还在等渲染线程释放 fence，那就先丢进 pending 队列，下次再试。
+
+真正的 <cfunc>ConditionalFinishDestroy</cfunc> 则会做最终收尾：
+
+```cpp
+if (!HasAnyFlags(RF_FinishDestroyed))
+{
+	SetFlags(RF_FinishDestroyed);
+	FinishDestroy();
+	GUObjectArray.ResetSerialNumber(this);
+	GUObjectArray.RemoveObjectFromDeleteListeners(this);
+}
+```
+
+这一步之后，对象的弱引用序列号会被重置，删除监听也会移除，说明它已经进入“逻辑上彻底死亡”的阶段。
+
+再往后，<cvar>FAsyncPurge</cvar> 才会负责实际删除对象并回收内存。所以 UE 的对象回收本质上是一个明显的两阶段模型：
+
+1. <cfunc>BeginDestroy</cfunc>：开始清场。
+2. <cfunc>FinishDestroy</cfunc>：确认可以收尾。
+3. <cvar>Purge/Delete</cvar>：最终释放内存。
+
+# 一次完整 GC 的调用链
+
+把前面的流程串起来，大致就是下面这样：
+
+```cpp
+CollectGarbage(...)
+	AcquireGCLock()
+	CollectGarbageInternal(...)
+		GReachabilityState.CollectGarbage(...)
+			PreCollectGarbageImpl(...)
+				FlushAsyncLoading()
+				BroadcastPreGarbageCollect()
+				LockUObjectHashTables()
+			PerformReachabilityAnalysisAndConditionallyPurgeGarbage(...)
+				PerformReachabilityAnalysis()
+					CollectGarbageFull / CollectGarbageIncremental
+			PostCollectGarbageImpl(...)
+				ClearWeakReferences()
+				GatherUnreachableObjects()
+				UnlockUObjectHashTables()
+				ReleaseGCLock()
+				UnhashUnreachableObjects()
+					ConditionalBeginDestroy()
+				IncrementalPurgeGarbage()
+					IncrementalDestroyGarbage()
+						IsReadyForFinishDestroy()
+						ConditionalFinishDestroy()
+						FAsyncPurge::TickPurge()
+```
+
+为了更直观一点，也可以把这条主线画成一个时序图：
+
+<script type="module">
+import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs';
+mermaid.initialize({
+	startOnLoad: true,
+	theme: 'default',
+	themeVariables: {
+		fontSize: '12px'
+	}
+});
+</script>
+
+<style>
+.mermaid svg {
+	max-width: 100%;
+	height: auto;
+}
+
+.mermaid text,
+.mermaid .messageText,
+.mermaid .noteText {
+	font-size: 12px !important;
+}
+</style>
+
+<div class="mermaid">
+sequenceDiagram
+	participant Game as Game Thread
+	participant Reach as FReachabilityState
+	participant FastGC as FRealtimeGC / TFastReferenceCollector
+	participant Purge as Destroy Phase
+
+	Game->>Game: AcquireGCLock()
+	Game->>Reach: CollectGarbageInternal()
+	Reach->>Reach: PreCollectGarbageImpl()
+	alt 正在异步加载
+		Reach->>Game: ReleaseGCLock()
+		Game->>Game: FlushAsyncLoading()
+		Reach->>Game: AcquireGCLock()
+	end
+	Reach->>Reach: BroadcastPreGarbageCollect()
+	Reach->>Reach: LockUObjectHashTables()
+	Reach->>FastGC: PerformReachabilityAnalysis()
+	FastGC->>FastGC: Mark root / initial refs
+	FastGC->>FastGC: Traverse token stream
+	alt 增量可达性超时
+		FastGC-->>Reach: Suspend and continue next frame
+	else 本轮完成
+		FastGC-->>Reach: Reachability complete
+	end
+	Reach->>Reach: ClearWeakReferences()
+	Reach->>Reach: GatherUnreachableObjects()
+	Reach->>Game: UnlockUObjectHashTables()
+	Reach->>Game: ReleaseGCLock()
+	Reach->>Purge: UnhashUnreachableObjects()
+	Purge->>Purge: ConditionalBeginDestroy()
+	Purge->>Purge: IncrementalDestroyGarbage()
+	loop Until ready
+		Purge->>Purge: IsReadyForFinishDestroy()
+	end
+	Purge->>Purge: ConditionalFinishDestroy()
+	Purge->>Purge: FAsyncPurge::TickPurge()
+	Purge-->>Game: GC complete
+</div>
+
+这条链路说明 UE 的 GC 并不是传统教材里那种“单线程 stop-the-world 标记清除”的简化版本，而是混合了：
+
+1. 反射引用收集。
+2. 自定义 <cfunc>AddReferencedObjects</cfunc>。
+3. 非 UObject 宿主的 <cvar>FGCObject</cvar>。
+4. Cluster 优化。
+5. 增量 Reachability。
+6. 增量 Destroy/Purge。
+
+# 再往下看一层：<cvar>FRealtimeGC</cvar> 怎么并行遍历引用
+
+上面提到 Mark 阶段最终会进入 <cvar>FRealtimeGC</cvar>。这一层开始，UE 才真正把“对象图遍历”这件事做成了可并行的流水线。
+
+先看 <cvar>FRealtimeGC</cvar> 的核心分发逻辑：
+
+```cpp
+template<class CollectorType, class ProcessorType>
+FORCEINLINE void CollectReferencesForGC(ProcessorType& Processor, UE::GC::FWorkerContext& Context)
+{
+	using FastReferenceCollector = TFastReferenceCollector<ProcessorType, CollectorType>;
+
+	if constexpr (IsParallel(ProcessorType::Options))
+	{
+		ProcessAsync([](void* P, FWorkerContext& C) { FastReferenceCollector(*reinterpret_cast<ProcessorType*>(P)).ProcessObjectArray(C); }, &Processor, Context);
+	}
+	else
+	{
+		FastReferenceCollector(Processor).ProcessObjectArray(Context);
+	}
+}
+```
+
+这里已经把设计意图写得很明显了：
+
+1. <cvar>FRealtimeGC</cvar> 自己不直接写遍历细节，它负责根据配置选择不同 <cvar>Processor</cvar> 和 <cvar>Collector</cvar> 组合。
+2. 真正的对象遍历由 <cfunc>TFastReferenceCollector::ProcessObjectArray</cfunc> 完成。
+3. 如果启用了并行 GC，就通过 <cfunc>ProcessAsync</cfunc> 把多个 <cvar>FWorkerContext</cvar> 分发到不同 worker 上执行。
+
+另外 <cvar>FRealtimeGC</cvar> 在正式遍历前，还会单独准备一批 <cvar>InitialReferences</cvar>：
+
+```cpp
+if (IsParallel(Options))
+{
+	InitialCollection = UE::Tasks::Launch(TEXT("CollectInitialReferences"),
+		[&] () { FGCObject::GGCObjectReferencer->AddInitialReferences(InitialReferences); });
+}
+```
+
+这一步主要是把 <cvar>FGCObject</cvar> 那条链上的初始原生引用提前收集出来。这样后续 worker 一启动，就能直接从统一的初始引用集开始扩散。
+
+## <cvar>TFastReferenceCollector</cvar> 的并行模型
+
+<cfunc>TFastReferenceCollector::ProcessObjectArray</cfunc> 是并行遍历最核心的函数。它不是简单“每个线程扫自己那一段数组”，而是一个带工作窃取的循环：
+
+```cpp
+while (true)
+{
+	Context.Stats.AddObjects(CurrentObjects.Num());
+	ProcessObjects(Dispatcher, CurrentObjects);
+
+	if (Processor.IsTimeLimitExceeded())
+	{
+		FlushWork(Dispatcher);
+		Dispatcher.Suspend();
+		SuspendWork(Context);
+		return;
+	}
+
+	FWorkBlock* Block = RemainingObjects.PopFullBlock<Options>();
+	...
+	switch (StealWork(Context, Collector, Block, Options))
+	{
+		case ELoot::Block: break;
+		case ELoot::ARO: goto StoleARO;
+		case ELoot::Context: goto StoleContext;
+	}
+}
+```
+
+这里面可以看出 3 个关键机制：
+
+1. **对象不是按单个粒度分发，而是按 block 分发**，降低线程同步成本。
+2. **本地队列空了以后可以 <cfunc>StealWork</cfunc>**，从其他 worker 那里偷 block 或上下文，尽量保持所有核心都在干活。
+3. **增量 GC 时可以 suspend**，把当前上下文保留下来，下一帧继续跑。
+
+所以 UE 的并行遍历并不是“静态切片”，而更接近一个 work-stealing scheduler。
+
+## 每个对象在遍历时会做什么
+
+继续看 <cfunc>ProcessObjects</cfunc>：
+
+```cpp
+UClass* Class = CurrentObject->GetClass();
+UObject* Outer = CurrentObject->GetOuter();
+
+if (!!(Options & EGCOptions::AutogenerateSchemas) && !Class->HasAnyClassFlags(CLASS_TokenStreamAssembled))
+{
+	Class->AssembleReferenceTokenStream();
+}
+
+FSchemaView Schema = Class->ReferenceSchema.Get();
+Dispatcher.HandleImmutableReference(Class, EMemberlessId::Class, EOrigin::Other);
+Dispatcher.HandleImmutableReference(Outer, EMemberlessId::Outer, EOrigin::Other);
+Private::VisitMembers(Dispatcher, Schema, CurrentObject);
+```
+
+这段逻辑非常关键，它说明一个 UObject 在 GC 看来其实会被拆成 3 类输入：
+
+1. **隐含引用**：<cvar>Class</cvar>、<cvar>Outer</cvar>、<cvar>ExternalPackage</cvar> 这类基础关系。
+2. **Schema 描述的成员引用**：也就是 Token Stream / GC Schema 里记录的属性布局。
+3. **ARO 路径**：在 Schema 访问过程中命中的 <cfunc>AddReferencedObjects</cfunc> 调用。
+
+换句话说，<cvar>FRealtimeGC</cvar> 并不是靠 C++ 反射逐字段动态判断，而是尽量把“怎么访问成员引用”预编译成 Schema，然后在遍历期做顺序解释执行。
+
+# Token Stream / GC Schema：GC 真正遍历的不是属性，而是“编译后的引用布局”
+
+UE 老资料里经常会提到 <cvar>ReferenceTokenStream</cvar>。在 UE5.4 这套实现里，它更接近一个已经结构化好的 **GC Schema**。<cfunc>UClass::AssembleReferenceTokenStreamInternal</cfunc> 负责把类的属性信息编译成这份 Schema：
+
+```cpp
+FSchemaBuilder Schema(0);
+if (UClass* SuperClass = GetSuperClass())
+{
+	SuperClass->AssembleReferenceTokenStreamInternal();
+	Schema.Append(SuperSchema);
+}
+
+for (TFieldIterator<FProperty> It(this, EFieldIteratorFlags::ExcludeSuper); It; ++It)
+{
+	FProperty* Property = *It;
+	Property->EmitReferenceInfo(Schema, 0, EncounteredStructProps, DebugPath);
+}
+
+ReferenceSchema.Set(FSchemaView(...));
+ClassFlags |= CLASS_TokenStreamAssembled;
+```
+
+这里有两个重点：
+
+1. **Schema 会先继承父类的引用布局**，所以子类不需要重复描述整条继承链。
+2. **每个 <cvar>FProperty</cvar> 不是在 GC 时被直接访问，而是在组装阶段先发出自己的引用描述**。
+
+## <cfunc>EmitReferenceInfo</cfunc> 到底在发什么
+
+不同属性类型会把自己翻译成不同的 <cvar>EMemberType</cvar>。
+
+例如最普通的 UObject 指针属性：
+
+```cpp
+void FObjectProperty::EmitReferenceInfo(...)
+{
+	Schema.Add(UE::GC::DeclareMember(DebugPath, BaseOffset + GetOffset_ForGC(), UE::GC::EMemberType::Reference));
+}
+```
+
+数组属性则会根据内部元素类型发出不同 token：
+
+```cpp
+if (Inner->IsA(FObjectProperty::StaticClass()))
+{
+	Type = EMemberType::ReferenceArray;
+}
+else
+{
+	Inner->EmitReferenceInfo(InnerSchema, 0, EncounteredStructProps, DebugPath);
+}
+
+Schema.Add(UE::GC::DeclareMember(DebugPath, BaseOffset + GetOffset_ForGC(), Type, InnerSchema.Build()));
+```
+
+结构体属性更有意思，如果结构体自己实现了 <cfunc>AddStructReferencedObjects</cfunc>，还会发一个 <cvar>MemberARO</cvar>：
+
+```cpp
+if (Struct->StructFlags & STRUCT_AddStructReferencedObjects)
+{
+	Schema.Add(UE::GC::DeclareMember(DebugPath, Offset + Idx * ElementSize, EMemberType::MemberARO, StructARO));
+}
+```
+
+所以 Token Stream / Schema 里并不只是“某偏移上有个 UObject*”这么简单，它还会编码：
+
+1. 这是单对象引用还是数组引用。
+2. 这是普通数组、稀疏数组还是 memory image array。
+3. 这里是否要递归进入内嵌 struct。
+4. 这里是否要额外调用 ARO。
+5. 什么时候 <cvar>Jump</cvar>，什么时候 <cvar>Stop</cvar>。
+
+## 遍历时怎么解释执行这些 token
+
+真正消费 Schema 的地方是 <cfunc>VisitMembers</cfunc>：
+
+```cpp
+switch (Member.Type)
+{
+	case EMemberType::Reference:
+		Dispatcher.HandleKillableReference(*(UObject**)MemberPtr, FMemberId(DebugIdx), Origin);
+		break;
+	case EMemberType::ReferenceArray:
+		Dispatcher.HandleKillableArray(*(TArray<UObject*>*)MemberPtr, FMemberId(DebugIdx), Origin);
+		break;
+	case EMemberType::StructArray:
+		VisitStructArray(Dispatcher, FSchemaView((++WordIt)->InnerSchema, Origin), *(FScriptArray*)MemberPtr);
+		break;
+	case EMemberType::MemberARO:
+		CallARO(Dispatcher, MemberPtr, *++WordIt);
+		break;
+	case EMemberType::ARO:
+		CallARO(Dispatcher, Instance, *++WordIt);
+		return;
+	case EMemberType::Stop:
+		return;
+}
+```
+
+这个实现很像一个轻量字节码解释器：
+
+1. 读一个 member word。
+2. 根据 <cvar>EMemberType</cvar> 决定是直接取引用、遍历数组、递归 struct，还是调用 ARO。
+3. 必要时通过 <cvar>Jump</cvar> 调整实例游标。
+4. 遇到 <cvar>Stop</cvar> 或实例级 <cvar>ARO</cvar> 就结束。
+
+相比每次 GC 都重新基于 <cvar>FProperty</cvar> 做虚函数分派，这种方案的优势是：**遍历期更线性、更 cache friendly，也更适合并行 worker 批处理。**
+
+## 命中引用之后发生什么
+
+当 <cfunc>VisitMembers</cfunc> 找到一个真正的 UObject 引用时，最终会落到 <cfunc>HandleTokenStreamObjectReference</cfunc>：
+
+```cpp
+if (ValidateReference(Object, PermanentPool, FReferenceToken(ReferencingObject), MemberId))
+{
+	FReferenceMetadata Metadata(GUObjectArray.ObjectToIndex(Object));
+	...
+	bool bReachedFirst = TReachabilityProcessor<Options>::HandleValidReference(Context, FImmutableReference{Object}, Metadata);
+}
+```
+
+这里才会真正决定：
+
+1. 这个引用是否合法。
+2. 指向的对象是不是第一次被标记到。
+3. 是否需要把它推进后续工作队列。
+4. 在开启 Garbage Elimination / History Tracking 时，是否顺手做额外处理。
+
+所以从实现层面讲，GC 的 Mark 阶段可以拆成下面这条更底层的流水线：
+
+1. <cfunc>UClass::AssembleReferenceTokenStreamInternal</cfunc> 预编译 Schema。
+2. <cfunc>TFastReferenceCollector::ProcessObjectArray</cfunc> 按 block 拉取对象。
+3. <cfunc>VisitMembers</cfunc> 解释执行 Schema。
+4. <cfunc>HandleTokenStreamObjectReference</cfunc> 校验并标记目标对象。
+5. 新发现的对象继续入队，直到没有新的可达对象为止。
+
+# 对业务代码的几个直接结论
+
+读完这套实现后，平时写 UE 代码时有几个结论会更清楚：
+
+1. **UObject 引用不要裸奔**。能让反射系统看见的引用，尽量走 <cvar>UPROPERTY</cvar> / <cvar>TObjectPtr</cvar>。
+2. **如果引用藏在非反射容器里，就要自己补 <cfunc>AddReferencedObjects</cfunc>**，否则对象看起来“明明还在用”，但 GC 并不知道。
+3. **非 UObject 管理器持有 UObject 时，优先考虑 <cvar>FGCObject</cvar>**。
+4. **<cfunc>AddToRoot</cfunc> 虽然好用，但不要滥用**。RootSet 是最硬的保活方式，用多了很容易把对象生命周期搞乱。
+5. **<cfunc>BeginDestroy</cfunc> 和 <cfunc>FinishDestroy</cfunc> 不是一回事**。有异步资源的对象，经常会卡在两者之间一段时间。
+
+# 小结
+
+UE5.4 的垃圾回收，本质上仍然是“从 Root 出发做可达性分析，再清理不可达对象”的 Mark-Sweep 思路；但为了适应大型项目的运行时需求，引擎在实现上又叠加了增量分析、多线程引用遍历、Cluster、异步销毁等一整套机制。
+
+所以平时我们遇到的很多 GC 问题，例如对象被提前回收、WeakPtr 失效、资源迟迟不释放、某一帧 GC 卡顿严重，往往都可以沿着下面这几个方向排查：
+
+1. 引用链有没有被反射系统或 <cfunc>AddReferencedObjects</cfunc> 正确上报。
+2. 对象是不是被错误地 Root 住了。
+3. 是否卡在 <cfunc>BeginDestroy</cfunc> -> <cfunc>IsReadyForFinishDestroy</cfunc> -> <cfunc>FinishDestroy</cfunc> 之间。
+4. 是否开启了 Incremental Reachability / Incremental Purge，导致 GC 跨帧完成。
+
+把这条主线理顺之后，再去看具体模块的 GC Bug，基本就不会只停留在“这个对象怎么突然没了”的表面现象上了。
+
