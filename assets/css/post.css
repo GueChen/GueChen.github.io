@@ -4,17 +4,18 @@ cvar{
     color: #772222;    
 }
 
-cfunc{
+cfunc, .cfunc {
     background-color: #FFFFDD;
     border: 1px solid #EEEEBB;
     color: #777733;
 }
 
-cvar, cfunc {
+cvar, cfunc, .cfunc {
     border-radius: 3px;    
     font-size: 0.9em;
     /* margin: 0px 2px 0px 2px; */
     padding: 0px 4px 0px 4px;
+    white-space: nowrap;
 }
 
 .post-flex-row{
