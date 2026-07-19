@@ -40,6 +40,7 @@ home_music_player:
 markdown: kramdown
 kramdown:
   toc_levels: 1..6
+  syntax_highlighter: rouge
 # Build settings
 # theme: minima
 plugins:

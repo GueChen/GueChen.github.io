@@ -10,12 +10,40 @@ cfunc, .cfunc {
     color: #777733;
 }
 
-cvar, cfunc, .cfunc {
+ctype {
+    background-color: #DDFFDD;
+    border: 1px solid #BBEEBB;
+    color: #227722;
+}
+
+cvar, cfunc, .cfunc, ctype, cmrc {
+    display: inline;
     border-radius: 3px;    
     font-size: 0.9em;
+    line-height: 1.4;
     /* margin: 0px 2px 0px 2px; */
     padding: 0px 4px 0px 4px;
     white-space: nowrap;
+}
+
+.postlist-container li > cvar:first-child + p,
+.postlist-container li > cfunc:first-child + p,
+.postlist-container li > ctype:first-child + p,
+.postlist-container li > cmrc:first-child + p {
+    display: inline;
+    margin: 0;
+}
+
+.postlist-container ol,
+.postlist-container ul {
+    margin-left: 0;
+    padding-left: 1.8em;
+    list-style-position: outside;
+}
+
+.postlist-container li > ol,
+.postlist-container li > ul {
+    padding-left: 1.6em;
 }
 
 .post-flex-row{
